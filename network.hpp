@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <winsock2.h>
 
 // define method headers for network.cpp
 
