@@ -88,14 +88,18 @@ private:
     NetworkManager(bool testing) {
         perfScore = calculateMetrics();
         test = testing;
+        //WSAStartup(); might not be needed
     }
 
     // internal async method, ran by leaders
     void listenForScan() {
-        // initialize UDP socket here
+        // IPv4 UDP socket
+        SOCKET scanListener = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         while (!halting && nodeState == LEADER) {
             // wait here
         }
+        // close UDP socket
+        closesocket(scanListener);
     }
 
     // internal async method

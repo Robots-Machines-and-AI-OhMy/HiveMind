@@ -1,6 +1,10 @@
 #ifndef NETWORK
 #define NETWORK
 
+#include <string>
+#include <vector>
+#include <mutex>
+
 // define method headers for network.cpp
 
 // node statuses
