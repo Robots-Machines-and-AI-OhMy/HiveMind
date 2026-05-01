@@ -50,8 +50,7 @@ private:
     // holds NetInfo structs, used for reporting scan results to UI
     vector<struct NetInfo> netInfo;
 
-    bool WSAinit; //true if winsock.dll is initialized
-    bool lsquicInit; //true if lsquic is initalized
+    WSADATA wsdata;
 
     bool halting; //used to halt async ops
     NetworkManager* netmgr; // pointer to singleton obj
@@ -69,6 +68,8 @@ public:
     };
 
     static NetworkManager* getNetworkManager(bool testing);
+
+    double calculateMetrics();
 
     bool createNetwork(string name, string password);
     bool leaveNetwork();

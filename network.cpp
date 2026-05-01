@@ -246,8 +246,6 @@ NetworkManager::NetworkManager(bool testing) {
     gethostname(hostname, 256);
 
     currentNet = NULL;
-    tickTime = 200;
-    heartbeatTimeout = 500;
 
     netInfo = new vector<struct NetInfo>();
     halting = false;
@@ -314,7 +312,7 @@ bool NetworkManager::leaveNetwork() {
         Network currentNet = NULL;
         return true;
     }
-    catch (Exception e) {
+    catch (...) {
         return false;
     }
 }
