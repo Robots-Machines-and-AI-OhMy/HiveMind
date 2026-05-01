@@ -72,7 +72,7 @@ private:
     const int heartbeatTimeout = 500; //time in ms to wait for heartbeat
 
     // holds NetInfo structs, used for reporting scan results to UI
-    vector<struct NetInfo> netInfo;
+    vector<struct NetInfo> netInfo = new vector<struct NetInfo>();
 
     bool WSAinit = false; // if winsock.dll is initialized
     bool lsquicInit = false; //if lsquic is initialized
