@@ -22,7 +22,6 @@ private:
         string leadIP; //leader's IP address
         string password; //hash of password, may be null
     public:
-        Network(string netName, string leader);
         Network(string netName, string leader, string pass);
 
         string getName();
@@ -39,8 +38,19 @@ private:
     char* hostname; //the device's hostname
 
     Network currentNet; //current network device is member of, may be null
-    vector routingTable; //collecting broadcast data
     const int tickTime; //heartbeat timing interval
+    const int heartbeatTimeout; //timeout for getting heartbeat
+
+    // structure for network info, to be exposed to UI
+    struct NetInfo {
+        string name;
+        string UID;
+        string leadIP;
+        bool password;
+    };
+
+    // holds NetInfo structs, used for reporting scan results to UI
+    vector<struct NetInfo> netInfo;
 
     bool WSAinit; //true if winsock.dll is initialized
     bool lsquicInit; //true if lsquic is initalized
@@ -57,6 +67,8 @@ public:
     bool createNetwork(string name, string password);
     bool leaveNetwork();
     bool joinNetwork(string name, string UID, string password);
+
+    bool isConnected(); //returns true if currently connected to a network
 
     void cleanup();
 };

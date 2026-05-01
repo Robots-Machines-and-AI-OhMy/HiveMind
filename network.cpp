@@ -18,10 +18,10 @@ using namespace std;
 
 // node statuses
 enum status {
-    Leader,
-    Follower,
-    Candidate,
-    None
+    LEADER,
+    FOLLOWER,
+    CANDIDATE,
+    NONE
 };
 
 class NetworkManager {
@@ -36,14 +36,7 @@ private:
         string password; //hash of password, may be null
 
     public:
-        //network with a name, no password
-        Network(string netName, string leader) {
-            name = netName;
-            leadIP = leader;
-            password = NULL;
-        }
-
-        //network with a name and password
+        // network constructor, password may be NULL
         Network(string netName, string leader, string pass) {
             name = netName;
             password = pass;
@@ -78,9 +71,16 @@ private:
     const int tickTime = 200; // time between heartbeats (in ms)
     const int heartbeatTimeout = 500; //time in ms to wait for heartbeat
 
-    // bind network names to IP addresses
-    // network join relies on this being up to date, collected from broadcast
-    vector routingTable;
+    // structure for network info, to be exposed to UI
+    struct NetInfo {
+        string name;
+        string UID;
+        string leadIP;
+        bool password;
+    };
+
+    // holds NetInfo structs, used for reporting scan results to UI
+    vector<struct NetInfo> netInfo;
 
     bool WSAinit = false; // if winsock.dll is initialized
     bool lsquicInit = false; //if lsquic is initialized
@@ -105,10 +105,7 @@ public:
     // password may be null
     // returns true if network successfully created
     bool createNetwork(string name, string password) {
-        if (password == NULL)
-            currentNet = new Network(name, hostname);
-        else
-            currentNet = new Network(name, hostname, password);
+        currentNet = Network(name, hostname, password);
 
         //perform rest of setup logic here
 
@@ -139,18 +136,18 @@ public:
         return false; //replace with join logic later
     }
 
-    // internal async method
-    void broadcastNetInfo() {
+    // internal async method, ran by leaders
+    void listenForScan() {
         // initialize UDP socket here
-        while (!halting) {
-            // broadcast info here
+        while (!halting && nodeState == LEADER) {
+            // wait here
         }
     }
 
     // internal async method
     void sendHeartbeat() {
         while (!halting) {
-            if (nodeState == Leader) {
+            if (nodeState == LEADER) {
                 //send heartbeat logic
             }
             else {
