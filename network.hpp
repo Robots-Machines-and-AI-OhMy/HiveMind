@@ -37,15 +37,15 @@ private:
         bool validatePassword(string inputPassHash);
     };
 
-    const bool test; //testing mode
+    bool test; //testing mode
 
     status nodeState; //current state, see enum above
     double perfScore; //performance score
     char* hostname; //the device's hostname
 
     Network currentNet; //current network device is member of, may be null
-    const int tickTime; //heartbeat timing interval
-    const int heartbeatTimeout; //timeout for getting heartbeat
+    const int tickTime = 200; //heartbeat timing interval
+    const int heartbeatTimeout = 500; //timeout for getting heartbeat
 
     // holds NetInfo structs, used for reporting scan results to UI
     vector<struct NetInfo> netInfo;
