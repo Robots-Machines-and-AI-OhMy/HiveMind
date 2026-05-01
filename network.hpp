@@ -72,11 +72,7 @@ public:
 
     void cleanup();
 
-<<<<<<< HEAD
     vector<struct NetInfo> getNetworkInfo();
-=======
-    vector<NetInfo> getNetworkInfo();
->>>>>>> 748d83addcdcdad615875eff6466d396318db9ed
 };
 
 #endif
