@@ -227,8 +227,8 @@ NetworkManager::Network::Network(string netName, string leader, string pass) {
     leadIP = leader;
 }
 
-NetworkManager::Network::getName() { return name; }
-NetworkManager::Network::getLeader() { return leadIP; }
+string NetworkManager::Network::getName() { return name; }
+string NetworkManager::Network::getLeader() { return leadIP; }
 
 // accepts a password hash and compares it to this network
 // returns true if the hashes match

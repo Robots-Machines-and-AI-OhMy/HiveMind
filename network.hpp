@@ -58,6 +58,9 @@ private:
     static mutex mtx; // lock object
     NetworkManager(bool testing);
 
+    void listenForScan();
+    void sendHeartbeat();
+
 public:
 
     // structure for network info, to be exposed to UI
