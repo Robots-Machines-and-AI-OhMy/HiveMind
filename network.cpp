@@ -227,6 +227,9 @@ NetworkManager::Network::Network(string netName, string leader, string pass) {
     leadIP = leader;
 }
 
+NetworkManager::Network::getName() { return name; }
+NetworkManager::Network::getLeader() { return leadIP; }
+
 // accepts a password hash and compares it to this network
 // returns true if the hashes match
 bool NetworkManager::Network::validatePassword(string inputPassHash) {
@@ -245,7 +248,7 @@ NetworkManager::NetworkManager(bool testing) {
     hostname = (char*)malloc(256 * sizeof(char));
     gethostname(hostname, 256);
 
-    currentNet = new Network("null", "none", "na"); //random inapplicable values
+    currentNet = new Network::Network("null", "none", "na"); //random inapplicable values
 
     netInfo = new vector<struct NetInfo>();
     halting = false;
