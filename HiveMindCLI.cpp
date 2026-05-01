@@ -7,7 +7,7 @@ enum Command {
     HELP,
     CREATE,
     SCAN,
-    CONNECT,
+    JOIN,
     STATUS,
     LEADER,
     DISCONNECT,
@@ -19,7 +19,7 @@ Command getCommand(const string& cmd) {
     if (cmd == "help") return HELP;
     if (cmd == "Create") return CREATE;
     if (cmd == "scan") return SCAN;
-    if (cmd == "connect") return CONNECT;
+    if (cmd == "join") return JOIN;
     if (cmd == "status") return STATUS;
     if (cmd == "leader") return LEADER;
     if (cmd == "disconnect") return DISCONNECT;
@@ -29,7 +29,7 @@ Command getCommand(const string& cmd) {
 
 int main() {
     string input;
-    bool connected = false;
+    bool isConnected = false;
     bool running = true;
     NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
 
@@ -65,29 +65,31 @@ int main() {
             case SCAN:
                 cout << "\nScanning local network...\n";
                 cout << "Found networks:\n";
+                NetManager->vector<struct NetInfo> getNetworkInfo();
                 cout << "1. " + networkName + "password yes\n";
                 cout << "2. HiveMind-Lab | Password: Yes\n";
                 cout << "3. HiveMind-Test | Password: No\n\n";
                 break;
 
-            case CONNECT:
+            case JOIN:
+                String UID;
 
                 cout << "Enter network name: ";
                 cin >> networkName;
 
-                if (networkName == "HiveMind-Lab") {
+                if (networkName) {
                     cout << "Enter password: ";
                     cin >> password;
 
                     if (password == "1234") {
-                        connected = true;
+                        isConnected = true;
                         cout << "Connected to HiveMind-Lab successfully.\n\n";
                     } else {
                         cout << "Error: Connection attempt failed.\n\n";
                     }
                 }
                 else if (networkName == "HiveMind-Test") {
-                    connected = true;
+                    isConnected = true;
                     cout << "Connected to HiveMind-Test successfully.\n\n";
                 }
                 else {
@@ -97,7 +99,7 @@ int main() {
             }
 
             case STATUS:
-                if (connected) {
+                if (isConnected) {
                     cout << "\nNetwork Status:\n";
                     cout << "Connected: Yes\n";
                     cout << "Node Role: Follower\n";
@@ -110,7 +112,7 @@ int main() {
                 break;
 
             case LEADER:
-                if (connected) {
+                if (isConnected) {
                     cout << "Current Leader Node: 192.168.1.10\n\n";
                 } else {
                     cout << "Error: Not connected to a HiveMind network.\n\n";
@@ -118,9 +120,10 @@ int main() {
                 break;
 
             case DISCONNECT:
-                if (connected) {
+                if (isConnected) {
                     cout << "Leaving HiveMind network...\n";
-                    connected = false;
+                    isConnected = leaveNetwork();;
+
                     cout << "Safely disconnected from network.\n\n";
                 } else {
                     cout << "Error: No active network connection.\n\n";
