@@ -62,7 +62,7 @@ public:
         bool password;
     };
 
-    NetworkManager* getNetworkManager(bool testing);
+    static NetworkManager* getNetworkManager(bool testing);
 
     bool createNetwork(string name, string password);
     bool leaveNetwork();
