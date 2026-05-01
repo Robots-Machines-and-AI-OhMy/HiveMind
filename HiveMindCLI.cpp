@@ -9,7 +9,7 @@ enum Command {
     SCAN,
     JOIN,
     STATUS,
-    LEADER,
+    GETLEADER,
     DISCONNECT,
     EXIT,
     UNKNOWN
@@ -21,7 +21,7 @@ Command getCommand(const string& cmd) {
     if (cmd == "scan") return SCAN;
     if (cmd == "join") return JOIN;
     if (cmd == "status") return STATUS;
-    if (cmd == "leader") return LEADER;
+    if (cmd == "leader") return GETLEADER;
     if (cmd == "disconnect") return DISCONNECT;
     if (cmd == "exit") return EXIT;
     return UNKNOWN;
@@ -111,7 +111,7 @@ int main() {
                 }
                 break;
 
-            case LEADER:
+            case GETLEADER:
                 if (isConnected) {
                     cout << "Current Leader Node: 192.168.1.10\n\n";
                 } else {

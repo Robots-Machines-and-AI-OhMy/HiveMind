@@ -8,8 +8,19 @@
     <option name="/Default/Housekeeping/GlobalSettingsUpgraded/IsUpgraded/@EntryValue" value="true" type="bool" />
     <option name="/Default/RiderDebugger/RiderRestoreDecompile/RestoreDecompileSetting/@EntryValue" value="false" type="bool" />
   </component>
+  <component name="CMakePresetLoader"><![CDATA[{
+  "useNewFormat": true
+}]]></component>
   <component name="CMakeProjectFlavorService">
     <option name="flavorId" value="CMakePlainProjectFlavor" />
+  </component>
+  <component name="CMakeReloadState">
+    <option name="reloaded" value="true" />
+  </component>
+  <component name="CMakeRunConfigurationManager">
+    <generated>
+      <config projectName="MindMesh" targetName="MindMesh" />
+    </generated>
   </component>
   <component name="CMakeSettings">
     <configurations>
@@ -17,8 +28,21 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="75218612-5dce-486d-ab52-7bcc040b416e" name="Changes" comment="">
+    <list default="true" id="75218612-5dce-486d-ab52-7bcc040b416e" name="Changes" comment="test">
       <change beforePath="$PROJECT_DIR$/HiveMindCLI.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/HiveMindCLI.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/AssemblyInfo.cpp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/CppCLR_WinFormsProject.cpp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/Form1.cpp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/Form1.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/MMWinforms.sln" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/MMWinforms.vcxproj" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/MMWinforms.vcxproj.filters" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/MMWinforms.vcxproj.user" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/Resource.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/app.ico" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/app.rc" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/pch.cpp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Winforms/MMWinforms/pch.h" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -28,6 +52,7 @@
   <component name="ClangdSettings">
     <option name="formatViaClangd" value="false" />
   </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="CMakeBuildProfile:Debug" />
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
@@ -46,6 +71,12 @@
   <component name="MacroExpansionManager">
     <option name="directoryName" value="ijX2Htr2" />
   </component>
+  <component name="ProjectApplicationVersion">
+    <option name="ide" value="CLion" />
+    <option name="majorVersion" value="2025" />
+    <option name="minorVersion" value="3.3" />
+    <option name="productBranch" value="Classic" />
+  </component>
   <component name="ProjectColorInfo"><![CDATA[{
   "associatedIndex": 2
 }]]></component>
@@ -56,6 +87,7 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "CMake Application.MindMesh.executor": "Run",
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.RadMigrateCodeStyle": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
@@ -64,6 +96,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.readMode.enableVisualFormatting": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "RunOnceActivity.west.config.association.type.startup.service": "true",
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
     "git-widget-placeholder": "main",
@@ -77,6 +110,18 @@
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
+  <component name="RunManager">
+    <configuration default="true" type="CLionExternalRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true">
+      <method v="2">
+        <option name="CLION.EXTERNAL.BUILD" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="MindMesh" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="MindMesh" TARGET_NAME="MindMesh" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="MindMesh" RUN_TARGET_NAME="MindMesh">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+  </component>
   <component name="TaskManager">
     <task active="true" id="Default" summary="Default task">
       <changelist id="75218612-5dce-486d-ab52-7bcc040b416e" name="Changes" comment="" />
@@ -84,11 +129,37 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1777651117754</updated>
-      <workItem from="1777651119124" duration="8001000" />
+      <workItem from="1777651119124" duration="8524000" />
     </task>
+    <task id="LOCAL-00001" summary="test">
+      <option name="closed" value="true" />
+      <created>1777663644086</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1777663644086</updated>
+    </task>
+    <task id="LOCAL-00002" summary="test">
+      <option name="closed" value="true" />
+      <created>1777663661388</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1777663661388</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="VCPKGProject">
+    <isAutomaticCheckingOnLaunch value="false" />
+    <isAutomaticFoundErrors value="true" />
+    <isAutomaticReloadCMake value="true" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="test" />
+    <option name="LAST_COMMIT_MESSAGE" value="test" />
   </component>
 </project>
