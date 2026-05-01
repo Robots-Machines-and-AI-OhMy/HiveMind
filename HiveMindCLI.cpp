@@ -1,9 +1,11 @@
 #include <iostream>
 #include <string>
+#include "network.hpp"
 using namespace std;
 
 enum Command {
     HELP,
+    CREATE,
     SCAN,
     CONNECT,
     STATUS,
@@ -15,6 +17,7 @@ enum Command {
 
 Command getCommand(const string& cmd) {
     if (cmd == "help") return HELP;
+    if (cmd == "Create") return CREATE;
     if (cmd == "scan") return SCAN;
     if (cmd == "connect") return CONNECT;
     if (cmd == "status") return STATUS;
@@ -28,6 +31,7 @@ int main() {
     string input;
     bool connected = false;
     bool running = true;
+    NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
 
     cout << "=============================\n";
     cout << "     HiveMind CLI System\n";
@@ -48,16 +52,25 @@ int main() {
                 cout << "disconnect  - Leave the network\n";
                 cout << "exit        - Close HiveMind\n\n";
                 break;
+            case CREATE:
+                string networkName, password;
+                cout << "\nCreate your network\n";
+                cout << "Enter the name of your network\n";
+                cin >> networkName;
+                cout << "Enter the password for your network or press enter for no password\n";
+                cin >> password;
+                NetManager->createNetwork(networkName, password);
+                break;
 
             case SCAN:
                 cout << "\nScanning local network...\n";
                 cout << "Found networks:\n";
-                cout << "1. HiveMind-Lab | Leader IP: 192.168.1.10 | Password: Yes\n";
-                cout << "2. HiveMind-Test | Leader IP: 192.168.1.22 | Password: No\n\n";
+                cout << "1. " + networkName + "password yes\n";
+                cout << "2. HiveMind-Lab | Password: Yes\n";
+                cout << "3. HiveMind-Test | Password: No\n\n";
                 break;
 
-            case CONNECT: {
-                string networkName, password;
+            case CONNECT:
 
                 cout << "Enter network name: ";
                 cin >> networkName;
