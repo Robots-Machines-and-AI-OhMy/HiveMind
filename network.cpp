@@ -240,7 +240,7 @@ bool NetworkManager::Network::validatePassword(string inputPassHash) {
 }
 
 // constructor, specifies testing mode
-NetworkManager::NetworkManager(bool testing) {
+NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
     perfScore = calculateMetrics();
     test = testing;
 
@@ -248,7 +248,7 @@ NetworkManager::NetworkManager(bool testing) {
     hostname = (char*)malloc(256 * sizeof(char));
     gethostname(hostname, 256);
 
-    currentNet = new this->Network::Network("null", "none", "na"); //random inapplicable values
+    //currentNet = new this->Network::Network("null", "none", "na"); //random inapplicable values
 
     netInfo = new vector<struct NetInfo>();
     halting = false;
