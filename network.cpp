@@ -90,7 +90,7 @@ private:
         test = testing;
     }
 
-        // internal async method, ran by leaders
+    // internal async method, ran by leaders
     void listenForScan() {
         // initialize UDP socket here
         while (!halting && nodeState == LEADER) {
@@ -155,6 +155,16 @@ public:
     // returns true if success, false if there was an error
     bool joinNetwork(string name, string UID, string password) {
         return false; //replace with join logic later
+    }
+
+    //scans for networks by broadcasting UDP port 56713
+    void scan() {
+        // initialize UDP socket(s)
+
+        // send broadcast message
+
+        // collect responses, populate netInfo vector
+
     }
 
     // runs metric calculation algorithm

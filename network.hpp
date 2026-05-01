@@ -67,6 +67,7 @@ public:
     bool createNetwork(string name, string password);
     bool leaveNetwork();
     bool joinNetwork(string name, string UID, string password);
+    void scan(); //scans for network (populates networkInfo vector)
 
     bool isConnected(); //returns true if currently connected to a network
 
