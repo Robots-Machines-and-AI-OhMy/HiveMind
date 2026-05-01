@@ -71,14 +71,6 @@ private:
     const int tickTime = 200; // time between heartbeats (in ms)
     const int heartbeatTimeout = 500; //time in ms to wait for heartbeat
 
-    // structure for network info, to be exposed to UI
-    struct NetInfo {
-        string name;
-        string UID;
-        string leadIP;
-        bool password;
-    };
-
     // holds NetInfo structs, used for reporting scan results to UI
     vector<struct NetInfo> netInfo;
 
@@ -98,7 +90,36 @@ private:
         test = testing;
     }
 
+        // internal async method, ran by leaders
+    void listenForScan() {
+        // initialize UDP socket here
+        while (!halting && nodeState == LEADER) {
+            // wait here
+        }
+    }
+
+    // internal async method
+    void sendHeartbeat() {
+        while (!halting) {
+            if (nodeState == LEADER) {
+                //send heartbeat logic
+            }
+            else {
+                //send metrics to leader
+            }
+        }
+    }
+
 public:
+
+    // structure for network info, to be exposed to UI
+    struct NetInfo {
+        string name;
+        string UID;
+        string leadIP;
+        bool password;
+    };
+
     NetworkManager(const NetworkManager& obj) = delete; //delete copy constructor
 
     // creates a network with specified name and password
@@ -134,26 +155,6 @@ public:
     // returns true if success, false if there was an error
     bool joinNetwork(string name, string UID, string password) {
         return false; //replace with join logic later
-    }
-
-    // internal async method, ran by leaders
-    void listenForScan() {
-        // initialize UDP socket here
-        while (!halting && nodeState == LEADER) {
-            // wait here
-        }
-    }
-
-    // internal async method
-    void sendHeartbeat() {
-        while (!halting) {
-            if (nodeState == LEADER) {
-                //send heartbeat logic
-            }
-            else {
-                //send metrics to leader
-            }
-        }
     }
 
     // runs metric calculation algorithm
@@ -197,5 +198,7 @@ public:
         }
         return netmgr;
     }
+
+    vector<struct NetInfo> getNetworkInfo() { return netInfo; }
 
 };

@@ -5,10 +5,10 @@
 
 // node statuses
 enum status {
-    Leader,
-    Follower,
-    Candidate,
-    None
+    LEADER,
+    FOLLOWER,
+    CANDIDATE,
+    NONE
 };
 
 // singleton class (only one instance can exist at a time)
@@ -41,14 +41,6 @@ private:
     const int tickTime; //heartbeat timing interval
     const int heartbeatTimeout; //timeout for getting heartbeat
 
-    // structure for network info, to be exposed to UI
-    struct NetInfo {
-        string name;
-        string UID;
-        string leadIP;
-        bool password;
-    };
-
     // holds NetInfo structs, used for reporting scan results to UI
     vector<struct NetInfo> netInfo;
 
@@ -62,6 +54,14 @@ private:
 
 public:
 
+    // structure for network info, to be exposed to UI
+    struct NetInfo {
+        string name;
+        string UID;
+        string leadIP;
+        bool password;
+    };
+
     NetworkManager* getNetworkManager(bool testing);
 
     bool createNetwork(string name, string password);
@@ -71,6 +71,8 @@ public:
     bool isConnected(); //returns true if currently connected to a network
 
     void cleanup();
+
+    vector<NetInfo> getNetworkInfo();
 };
 
 #endif
