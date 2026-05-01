@@ -234,8 +234,7 @@ bool NetworkManager::Network::validatePassword(string inputPassHash) {
             return true;
         else
             return false;
-    }
-};
+}
 
 // constructor, specifies testing mode
 NetworkManager::NetworkManager(bool testing) {
@@ -380,5 +379,3 @@ static NetworkManager* NetworkManager::getNetworkManager(bool testing) {
 }
 
 vector<struct NetInfo> NetworkManager::getNetworkInfo() { return netInfo; }
-
-};
