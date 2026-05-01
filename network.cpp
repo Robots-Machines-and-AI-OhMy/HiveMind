@@ -2,7 +2,7 @@
  * handles networking functions
  */
 
-#include <Lsquic.h> // Litespeed Quic library
+//#include <Lsquic.h> // Litespeed Quic library
 #include <iostream>
 #include <string>
 #include <vector> // basically array lists
@@ -352,7 +352,7 @@ void NetworkManager::cleanup() {
     }
 
     // cleanup networks
-    int success = winsock2::WSACleanup();
+    int success = WSACleanup();
 
     if (test) {
         // print captured issues to terminal
