@@ -245,7 +245,7 @@ NetworkManager::NetworkManager(bool testing) {
     hostname = (char*)malloc(256 * sizeof(char));
     gethostname(hostname, 256);
 
-    currentNet = NULL;
+    currentNet = new Network("null", "none", "na"); //random inapplicable values
 
     netInfo = new vector<struct NetInfo>();
     halting = false;
