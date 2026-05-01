@@ -7,6 +7,8 @@
 
 // define method headers for network.cpp
 
+using namespace std;
+
 // node statuses
 enum status {
     LEADER,
