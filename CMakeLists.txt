@@ -4,4 +4,7 @@ project(MindMesh)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(MindMesh HiveMindCLI.cpp)
+add_executable(MindMesh
+        HiveMindCLI.cpp
+        network.cpp
+)

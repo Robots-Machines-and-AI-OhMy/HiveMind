@@ -18,7 +18,9 @@
     <option name="reloaded" value="true" />
   </component>
   <component name="CMakeRunConfigurationManager">
-    <generated />
+    <generated>
+      <config projectName="MindMesh" targetName="MindMesh" />
+    </generated>
   </component>
   <component name="CMakeSettings">
     <configurations>
@@ -27,8 +29,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="75218612-5dce-486d-ab52-7bcc040b416e" name="Changes" comment="test">
-      <change beforePath="$PROJECT_DIR$/.idea/editor.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/editor.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/HiveMindCLI.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/HiveMindCLI.cpp" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -119,7 +121,7 @@
       <updated>1777651117754</updated>
       <workItem from="1777651119124" duration="8827000" />
       <workItem from="1777664486239" duration="194000" />
-      <workItem from="1777664770915" duration="225000" />
+      <workItem from="1777664770915" duration="1923000" />
     </task>
     <task id="LOCAL-00001" summary="test">
       <option name="closed" value="true" />
@@ -153,7 +155,15 @@
       <option name="project" value="LOCAL" />
       <updated>1777664278980</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="test">
+      <option name="closed" value="true" />
+      <created>1777665241121</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1777665241121</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

@@ -17,7 +17,7 @@ enum Command {
 
 Command getCommand(const string& cmd) {
     if (cmd == "help") return HELP;
-    if (cmd == "Create") return CREATE;
+    if (cmd == "create") return CREATE;
     if (cmd == "scan") return SCAN;
     if (cmd == "join") return JOIN;
     if (cmd == "status") return STATUS;
@@ -29,8 +29,12 @@ Command getCommand(const string& cmd) {
 
 int main() {
     string input;
+    string networkName;
+    string password;
+
     bool isConnected = false;
     bool running = true;
+
     NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
 
     cout << "=============================\n";
@@ -43,60 +47,52 @@ int main() {
         cin >> input;
 
         switch (getCommand(input)) {
+
             case HELP:
                 cout << "\nAvailable Commands:\n";
+                cout << "create      - Create a HiveMind network\n";
                 cout << "scan        - Search for HiveMind networks\n";
-                cout << "connect     - Connect to a network\n";
+                cout << "join        - Join a network\n";
                 cout << "status      - View current network status\n";
                 cout << "leader      - Show current leader node\n";
                 cout << "disconnect  - Leave the network\n";
                 cout << "exit        - Close HiveMind\n\n";
                 break;
+
             case CREATE:
-                string networkName, password;
                 cout << "\nCreate your network\n";
-                cout << "Enter the name of your network\n";
+                cout << "Enter the name of your network: ";
                 cin >> networkName;
-                cout << "Enter the password for your network or press enter for no password\n";
+
+                cout << "Enter the password for your network: ";
                 cin >> password;
+
                 NetManager->createNetwork(networkName, password);
                 break;
 
             case SCAN:
                 cout << "\nScanning local network...\n";
                 cout << "Found networks:\n";
-                NetManager->vector<struct NetInfo> getNetworkInfo();
-                cout << "1. " + networkName + "password yes\n";
-                cout << "2. HiveMind-Lab | Password: Yes\n";
-                cout << "3. HiveMind-Test | Password: No\n\n";
+
+                // Later you can replace this with NetManager->getNetworkInfo()
+                cout << "1. HiveMind-Lab | Password: Yes\n";
+                cout << "2. HiveMind-Test | Password: No\n\n";
                 break;
 
             case JOIN:
-                String UID;
-
                 cout << "Enter network name: ";
                 cin >> networkName;
 
-                if (networkName) {
-                    cout << "Enter password: ";
-                    cin >> password;
+                cout << "Enter password: ";
+                cin >> password;
 
-                    if (password == "1234") {
-                        isConnected = true;
-                        cout << "Connected to HiveMind-Lab successfully.\n\n";
-                    } else {
-                        cout << "Error: Connection attempt failed.\n\n";
-                    }
-                }
-                else if (networkName == "HiveMind-Test") {
+                if (password == "1234") {
                     isConnected = true;
-                    cout << "Connected to HiveMind-Test successfully.\n\n";
-                }
-                else {
+                    cout << "Connected to " << networkName << " successfully.\n\n";
+                } else {
                     cout << "Error: Connection attempt failed.\n\n";
                 }
                 break;
-            }
 
             case STATUS:
                 if (isConnected) {
@@ -122,8 +118,7 @@ int main() {
             case DISCONNECT:
                 if (isConnected) {
                     cout << "Leaving HiveMind network...\n";
-                    isConnected = leaveNetwork();;
-
+                    isConnected = false;
                     cout << "Safely disconnected from network.\n\n";
                 } else {
                     cout << "Error: No active network connection.\n\n";
