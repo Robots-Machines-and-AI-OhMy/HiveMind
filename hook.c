@@ -49,38 +49,6 @@ typedef enum { LOG_INFO=0, LOG_WARN=1, LOG_ERROR=2, LOG_TRACE=3 } LogLevel;
 static const WCHAR *LOG_TAG[] = { L"INFO ", L"WARN ", L"ERROR", L"TRACE" };
 
 /* ============================================================
- *  PROCESS PROFILE
- *  Cheap snapshot of a process before it launches.
- *  Passed to both engines; neither engine modifies it.
- * ============================================================ */
-
-typedef struct {
-    WCHAR  name[MAX_PATH];        /* basename, e.g. "notepad.exe"  */
-    WCHAR  full_path[MAX_PATH];   /* full path if resolvable        */
-    WCHAR  cmdline[1024];         /* truncated command line         */
-    WCHAR  cwd[MAX_PATH];         /* working directory              */
-    DWORD  creation_flags;        /* raw dwCreationFlags            */
-    BOOL   inherit_handles;
-    BOOL   has_gui;               /* heuristic from creation flags  */
-    DWORD  caller_pid;            /* PID of the calling process     */
-    WCHAR  caller_name[MAX_PATH]; /* basename of calling process    */
-    DWORD  local_cpu_count;
-    DWORDLONG local_phys_mem_mb;
-    DWORDLONG local_avail_mem_mb;
-    LARGE_INTEGER intercept_tick; /* QPC at hook entry              */
-} ProcessProfile;
-
-/* ============================================================
- *  ENGINE DECISION
- * ============================================================ */
-
-typedef enum {
-    OFFLOAD_YES      = 0,
-    OFFLOAD_NO       = 1,
-    OFFLOAD_FALLBACK = 2,   /* engine error or unavailable */
-} OffloadDecision;
-
-/* ============================================================
  *  ENGINE FUNCTION POINTER TYPES
  *  Implemented in AskEngine and TransferEngine respectively.
  *  The hook holds slots for these; they are filled at HookInit.
