@@ -1,45 +1,39 @@
-//
-// Created by jason on 5/1/2026.
-//
-
 /*
- * injector.hpp
+ * offload_hook.hpp
  * --------------------------------------------------------------
- * Public C++ interface for injector.dll.
+ * Public C++ interface for offload_hook.dll.
+ * (Renamed from injector.hpp — same role, clearer name.)
  *
- * Exposes two free functions:
- *   Inject()  — load hook.dll and wire in the two engine stubs.
- *   Eject()   — teardown and unload hook.dll.
+ * Exposes:
+ *   Inject()  — load hook.dll, wire in engine stubs, activate.
+ *   Eject()   — teardown hook.dll and unload.
  *
- * Engine linkage points are marked clearly below.
- * Replace each stub with the real engine function pointer
- * when AskEngine and TransferEngine are implemented.
+ * Engine linkage points are marked with LINK comments.
+ * Replace stubs in offload_hook.cpp when engines are ready.
+ *
+ * Also re-exports FnHookFilterAddName so callers can add names
+ * to hook.dll's runtime filter without including hook.h directly.
  * --------------------------------------------------------------
  */
 
-#ifndef INJECTOR_HPP
-#define INJECTOR_HPP
+#ifndef OFFLOAD_HOOK_HPP
+#define OFFLOAD_HOOK_HPP
 
-#define WIN32_LEAN_AND_MEAN
-#define UNICODE
-#define _UNICODE
-#include <windows.h>
-
-#include "hook.h"
+#include "hook.h"   /* ProcessProfile, QueueEntry, engine typedefs,
+                       DECISION_TIMEOUT_MS, HOOK_QUEUE_CAPACITY,
+                       FnHookFilterAddName                          */
 
 /* ============================================================
  *  ENGINE LINKAGE DECLARATIONS
  *
- *  When AskEngine and TransferEngine are ready, declare them
- *  here and include their respective headers.
+ *  When AskEngine and TransferEngine are implemented:
+ *    1. Include their headers here.
+ *    2. At the LINK comments in offload_hook.cpp, replace the
+ *       stub function pointers with the real ones.
  *
  *  Example:
- *    #include "ask_engine.h"      // provides AskEngineImpl()
- *    #include "transfer_engine.h" // provides TransferEngineImpl()
- *
- *  Then update the engine linkage points in injector.cpp
- *  (marked with /* LINK ... * comments) to pass the real
- *  function pointers to HookInit instead of the stubs.
+ *    #include "ask_engine.h"       // AskEngineImpl()
+ *    #include "transfer_engine.h"  // TransferEngineImpl()
  * ============================================================ */
 
 /* LINK AskEngine header here      */
@@ -54,32 +48,38 @@ extern "C" {
 /*
  * Inject()
  *
- * Loads hook.dll into the current process, resolves HookInit,
- * and passes the engine function pointers to it.
- *
- * Currently passes stub engines that return failure so the
- * fallback path in hook.dll is exercised and logged.
+ * Loads hook.dll, resolves HookInit, passes engine stubs.
+ * Until real engines are linked:
+ *   - Every non-OS process is caught and queued.
+ *   - AskEngine stub does not signal — timeout fires at 200 ms.
+ *   - Process runs locally after timeout.
+ *   - All activity is logged to C:\Temp\hook.log.
  *
  * Returns TRUE if hook.dll loaded and HookInit was called.
- * Returns FALSE if loading failed — the host process continues
- * normally without any interception.
  */
-__declspec(dllimport) BOOL WINAPI Inject(void);
+__declspec(dllexport) BOOL WINAPI Inject(void);
 
 /*
  * Eject()
  *
- * Calls HookTeardown inside hook.dll to clear engine pointers,
- * then unloads hook.dll.
- *
- * Note: the IAT entry still points to Hook_CreateProcessW after
- * this call.  Hook_CreateProcessW detects NULL engines and falls
- * through to the real CreateProcessW immediately.  For a full
- * IAT restore, rebuild with Microsoft Detours and call
- * DetourDetach in HookTeardown.
+ * Clears engines in hook.dll, then unloads it.
+ * After this call every intercepted launch passes through
+ * immediately (NULL engine guard -> local_run).
  */
-__declspec(dllimport) void WINAPI Eject(void);
+__declspec(dllexport) void WINAPI Eject(void);
+
+/*
+ * OffloadFilterAdd()
+ *
+ * Thin wrapper around hook.dll's hook_filter_add_name().
+ * Adds a process basename to the permanent local-only list.
+ * Call when the leader determines a binary is never offloadable.
+ *
+ * name — basename only, e.g. L"myapp.exe"
+ * Returns TRUE on success.
+ */
+__declspec(dllexport) BOOL WINAPI OffloadFilterAdd(LPCWSTR name);
 
 } /* extern "C" */
 
-#endif /* INJECTOR_HPP */
+#endif /* OFFLOAD_HOOK_HPP */

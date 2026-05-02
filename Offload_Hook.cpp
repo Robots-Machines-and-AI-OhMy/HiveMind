@@ -1,134 +1,76 @@
-//
-// Created by jason on 5/1/2026.
-//
-
 /*
- * injector.cpp
+ * offload_hook.cpp
  * --------------------------------------------------------------
- * Non-main component responsible for loading hook.dll and
- * supplying it with AskEngine and TransferEngine at runtime.
+ * Non-main component: loads hook.dll and wires in the engines.
+ * (Renamed from injector.cpp — same role, clearer name.)
  *
- * This is intentionally not a main() program — it exposes
- * Inject() and Eject() for the host application to call.
+ * Both engines are stubs that exercise the failure/timeout paths:
  *
- * Both engines are stubs that deliberately return failure
- * values so the hook's fallback path is exercised and logged.
+ *   AskEngine stub      — does NOT signal hDecisionEvent.
+ *                         Interceptor waits DECISION_TIMEOUT_MS,
+ *                         logs WARN "Timeout", runs locally.
  *
- * Build (MSVC):
- *   cl /LD /O2 /W4 injector.cpp /link kernel32.lib /out:injector.dll
+ *   TransferEngine stub — returns FALSE.
+ *                         Would log ERROR "Transfer: FAILED" if
+ *                         AskEngine ever returned OFFLOAD_YES.
+ *
+ * Build (MSVC x64 Developer Command Prompt):
+ *   cl /LD /O2 /W4 offload_hook.cpp /link kernel32.lib /out:offload_hook.dll
  * --------------------------------------------------------------
  */
 
-#define WIN32_LEAN_AND_MEAN
-#define UNICODE
-#define _UNICODE
-
-#include <windows.h>
-#include <stdio.h>
-
-/* ============================================================
- *  MIRROR TYPES FROM hook.c
- *  Duplicated here so injector.cpp has no header dependency
- *  on hook internals.  Keep in sync with hook.c.
- * ============================================================ */
-
-struct ProcessProfile {
-    wchar_t   name[MAX_PATH];
-    wchar_t   full_path[MAX_PATH];
-    wchar_t   cmdline[1024];
-    wchar_t   cwd[MAX_PATH];
-    DWORD     creation_flags;
-    BOOL      inherit_handles;
-    BOOL      has_gui;
-    DWORD     caller_pid;
-    wchar_t   caller_name[MAX_PATH];
-    DWORD     local_cpu_count;
-    DWORDLONG local_phys_mem_mb;
-    DWORDLONG local_avail_mem_mb;
-    LARGE_INTEGER intercept_tick;
-};
-
-enum OffloadDecision {
-    OFFLOAD_YES      = 0,
-    OFFLOAD_NO       = 1,
-    OFFLOAD_FALLBACK = 2,
-};
-
-typedef OffloadDecision (WINAPI *AskEngineFn)(
-    const ProcessProfile *profile,
-    wchar_t              *target_node_out,
-    DWORD                 target_node_len
-);
-
-typedef BOOL (WINAPI *TransferEngineFn)(
-    const ProcessProfile  *profile,
-    LPCWSTR                target_node,
-    LPWSTR                 lpCommandLine,
-    LPSECURITY_ATTRIBUTES  lpProcessAttributes,
-    LPSECURITY_ATTRIBUTES  lpThreadAttributes,
-    BOOL                   bInheritHandles,
-    DWORD                  dwCreationFlags,
-    LPVOID                 lpEnvironment,
-    LPCWSTR                lpCurrentDirectory,
-    LPSTARTUPINFOW         lpStartupInfo,
-    LPPROCESS_INFORMATION  lpProcessInformation
-);
-
-/* HookInit / HookTeardown signatures exported by hook.dll */
-typedef BOOL (WINAPI *FnHookInit)(AskEngineFn, TransferEngineFn);
-typedef void (WINAPI *FnHookTeardown)(void);
+#include "offload_hook.hpp"
 
 /* ============================================================
  *  MODULE STATE
  * ============================================================ */
 
-static HMODULE        g_hook_dll      = NULL;
-static FnHookTeardown g_teardown_fn   = NULL;
+static HMODULE           g_hook_dll       = NULL;
+static FnHookTeardown    g_teardown_fn    = NULL;
+static FnHookFilterAddName g_filter_add_fn = NULL;
 
 /* ============================================================
  *  AskEngine STUB
  *
- *  Real implementation: open a QUIC stream to the RAFT leader,
- *  send the profile, receive OFFLOAD_YES/NO and a target node.
+ *  Queue-based contract:
+ *    - Receives a live QueueEntry* from the intercept queue.
+ *    - Must write entry->decision (and entry->target_node if YES).
+ *    - Must signal entry->hDecisionEvent before returning.
  *
- *  Stub behaviour: always returns OFFLOAD_FALLBACK so that
- *  hook.c logs the error and falls back to local execution,
- *  proving the fallback path works end-to-end.
+ *  This stub does NOT signal — the interceptor's 200 ms timeout
+ *  fires, logs a WARN, and runs the process locally.
+ *  This proves the timeout fallback path end-to-end.
+ *
+ *  LINK: replace AskEngine below in Inject() with the real fn ptr.
  * ============================================================ */
 
-static OffloadDecision WINAPI AskEngine(
-    const ProcessProfile *profile,
-    wchar_t              *target_node_out,
-    DWORD                 /*target_node_len*/)
+static void WINAPI AskEngine(QueueEntry *entry)
 {
     /*
      * AskEngine — NOT YET IMPLEMENTED
      *
-     * When implemented this function will:
-     *   1. Serialise profile fields into a capability-request packet.
-     *   2. Open (or reuse) a lsQUIC stream to the RAFT leader.
-     *   3. Send the packet and await a decision response.
-     *   4. Write the chosen node address into target_node_out.
-     *   5. Return OFFLOAD_YES, OFFLOAD_NO, or OFFLOAD_FALLBACK.
+     * When implemented:
+     *   1. Post entry to a dedicated worker thread.
+     *   2. Worker serialises entry->profile into a request packet.
+     *   3. Send packet to RAFT leader over lsQUIC.
+     *   4. On leader response: write entry->decision + target_node.
+     *   5. Signal entry->hDecisionEvent to unblock the interceptor.
+     *
+     * If the response arrives after DECISION_TIMEOUT_MS the
+     * interceptor has already run locally and released the slot —
+     * the engine must check entry->in_use before signalling.
      */
+    (void)entry;
 
-    (void)profile;
-    (void)target_node_out;
-
-    /* Stub: signal that the engine is not available yet.
-     * hook.c will log LOG_ERROR and run the process locally. */
-    return OFFLOAD_FALLBACK;
+    /* Stub: do not signal — let the 200 ms timeout fire.
+     * hook.c will log:
+     *   [WARN ] Timeout (200 ms) — '<name>' runs locally        */
 }
 
 /* ============================================================
  *  TransferEngine STUB
  *
- *  Real implementation: build a ProcessBundle, open lsQUIC
- *  streams to the target node, ship the bundle, and populate
- *  lpProcessInformation with a surrogate handle.
- *
- *  Stub behaviour: always returns FALSE so that hook.c logs
- *  the transfer failure and falls back to local execution.
+ *  LINK: replace TransferEngine below in Inject() with real fn ptr.
  * ============================================================ */
 
 static BOOL WINAPI TransferEngine(
@@ -147,24 +89,24 @@ static BOOL WINAPI TransferEngine(
     /*
      * TransferEngine — NOT YET IMPLEMENTED
      *
-     * When implemented this function will:
-     *   1. Walk the PE import table to collect required DLLs.
-     *   2. Build a ProcessBundle (binary, deps, argv, env, cwd).
+     * When implemented:
+     *   1. Walk PE import table, collect required DLLs.
+     *   2. Build ProcessBundle (binary, deps, argv, env, cwd).
      *   3. Open lsQUIC streams to target_node:
-     *        Stream 0 → control  (bundle + exit code)
-     *        Stream 1 → stdin
-     *        Stream 2 → stdout
-     *        Stream 3 → stderr
-     *        Stream 4 → framebuffer (if has_gui)
-     *   4. Create a local surrogate handle for the caller.
+     *        Stream 0 -> control  (bundle + exit code)
+     *        Stream 1 -> stdin
+     *        Stream 2 -> stdout
+     *        Stream 3 -> stderr
+     *        Stream 4 -> framebuffer (if profile->has_gui)
+     *   4. Create local surrogate handle for lpProcessInformation.
      *   5. Return TRUE on success.
      */
-
     (void)profile;
     (void)target_node;
 
-    /* Stub: signal that transfer is not available yet.
-     * hook.c will log LOG_ERROR and run the process locally. */
+    /* Stub: return FALSE.
+     * hook.c will log:
+     *   [ERROR] Transfer: FAILED — '<name>' after X ms — local fallback */
     return FALSE;
 }
 
@@ -172,47 +114,62 @@ static BOOL WINAPI TransferEngine(
  *  PUBLIC API
  * ============================================================ */
 
+extern "C" {
+
 /*
  * Inject()
  *
- * Loads hook.dll into the current process, resolves HookInit,
- * and wires in the two engine stubs.  Call this once from the
- * host application before any process launches you want caught.
+ * Loads hook.dll, wires in the two engine stubs.
  *
- * Returns TRUE on success.  On failure the host process
- * continues normally — hook.dll is either not loaded or the
- * IAT patch was not applied.
+ * Expected log with stubs active:
+ *   [INFO ] hook.dll attached to PID ...
+ *   [INFO ] Filter: N system names loaded
+ *   [INFO ] Filter: System32  = C:\Windows\System32
+ *   [INFO ] Filter: SysWOW64  = C:\Windows\SysWOW64
+ *   [INFO ] Queue initialised (64 slots)
+ *   [INFO ] IAT patch applied — hook_test.exe
+ *   [INFO ] Ready (queue: 64 slots, timeout: 200 ms, filter: N names)
+ *   [ERROR] HookInit: AskEngine not linked — ...
+ *   [ERROR] HookInit: TransferEngine not linked — ...
+ *
+ * Then per non-OS process launch:
+ *   [TRACE] Filter: SKIP 'svchost.exe' — matches system name list
+ *         (or silently passes for user processes)
+ *   [INFO ] Caught: 'myapp.exe'
+ *   [TRACE] --- Caught Process --- ... fields ...
+ *   [INFO ] Queued: 'myapp.exe' (slot N, capacity 64)
+ *   [ERROR] AskEngine not linked — 'myapp.exe' will time out ...
+ *   [WARN ] Timeout (200 ms) — 'myapp.exe' runs locally
  */
-extern "C" __declspec(dllexport)
+__declspec(dllexport)
 BOOL WINAPI Inject(void)
 {
-    if (g_hook_dll) return TRUE;   /* already injected */
+    if (g_hook_dll) return TRUE;
 
     g_hook_dll = LoadLibraryW(L"hook.dll");
     if (!g_hook_dll) {
-        /* Not a crash — caller continues without interception */
-        OutputDebugStringW(L"[injector] LoadLibrary(hook.dll) failed\n");
+        OutputDebugStringW(L"[offload_hook] LoadLibrary(hook.dll) failed\n");
         return FALSE;
     }
 
     FnHookInit init_fn = (FnHookInit)
         GetProcAddress(g_hook_dll, "HookInit");
-
-    g_teardown_fn = (FnHookTeardown)
+    g_teardown_fn   = (FnHookTeardown)
         GetProcAddress(g_hook_dll, "HookTeardown");
+    g_filter_add_fn = (FnHookFilterAddName)
+        GetProcAddress(g_hook_dll, "hook_filter_add_name");
 
     if (!init_fn) {
-        OutputDebugStringW(L"[injector] HookInit not found in hook.dll\n");
+        OutputDebugStringW(
+            L"[offload_hook] HookInit not found in hook.dll\n");
         FreeLibrary(g_hook_dll);
         g_hook_dll = NULL;
         return FALSE;
     }
 
     /*
-     * Supply the two engine stubs.
-     * hook.c will log LOG_ERROR for each NULL/failing engine
-     * and fall back to local execution — that IS the expected
-     * behaviour at this stage.
+     * LINK AskEngine:      replace AskEngine with real fn ptr here.
+     * LINK TransferEngine: replace TransferEngine with real fn ptr here.
      */
     init_fn(AskEngine, TransferEngine);
     return TRUE;
@@ -220,23 +177,29 @@ BOOL WINAPI Inject(void)
 
 /*
  * Eject()
- *
- * Calls HookTeardown to clear engine pointers inside hook.dll,
- * then unloads the DLL.  After this call, CreateProcessW
- * operates normally again (IAT entry still points to hook,
- * but hook immediately falls through with NULL engines).
- *
- * For a complete IAT restore, replace the patch with Detours.
  */
-
-extern "C" __declspec(dllexport)
+__declspec(dllexport)
 void WINAPI Eject(void)
 {
     if (!g_hook_dll) return;
-
     if (g_teardown_fn) g_teardown_fn();
-
     FreeLibrary(g_hook_dll);
-    g_hook_dll    = NULL;
-    g_teardown_fn = NULL;
+    g_hook_dll       = NULL;
+    g_teardown_fn    = NULL;
+    g_filter_add_fn  = NULL;
 }
+
+/*
+ * OffloadFilterAdd()
+ *
+ * Forwards to hook.dll's hook_filter_add_name().
+ * Safe to call after Inject(); no-op if hook.dll is not loaded.
+ */
+__declspec(dllexport)
+BOOL WINAPI OffloadFilterAdd(LPCWSTR name)
+{
+    if (!g_filter_add_fn) return FALSE;
+    return g_filter_add_fn(name);
+}
+
+} /* extern "C" */
