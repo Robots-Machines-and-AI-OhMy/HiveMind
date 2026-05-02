@@ -73,6 +73,7 @@ extern "C" {
 /* Compile-time list of basenames that are always local.
  * Lower-case; comparison is case-insensitive.                  */
 #define HOOK_SYSTEM_NAMES {         \
+    /* Windows core processes */    \
     L"svchost.exe",                 \
     L"csrss.exe",                   \
     L"smss.exe",                    \
@@ -93,11 +94,25 @@ extern "C" {
     L"wuauclt.exe",                 \
     L"spoolsv.exe",                 \
     L"searchindexer.exe",           \
+    /* Build tools — never offloadable, suppress log noise */  \
+    L"cmake.exe",                   \
+    L"ninja.exe",                   \
+    L"cl.exe",                      \
+    L"link.exe",                    \
+    L"lib.exe",                     \
+    L"rc.exe",                      \
+    L"mt.exe",                      \
+    L"msbuild.exe",                 \
+    L"devenv.exe",                  \
+    L"git.exe",                     \
+    L"git-remote-https.exe",        \
+    L"sh.exe",                      \
+    L"bash.exe",                    \
     NULL                            \
 }
 
-/* Maximum number of names that hook_filter_add_name() accepts. */
-#define HOOK_FILTER_DYNAMIC_CAP  64
+/* Must be >= len(HOOK_SYSTEM_NAMES) + runtime additions.       */
+#define HOOK_FILTER_DYNAMIC_CAP  128
 
 /* ============================================================
  *  PROCESS PROFILE

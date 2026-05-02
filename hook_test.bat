@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 :: ============================================================
-:: deploy_and_run.bat
+:: hook_test.bat
 ::
 :: BEFORE RUNNING — set VCVARS to your vcvars64.bat path below.
 :: Run from an ELEVATED command prompt (Run as administrator).
@@ -11,11 +11,6 @@ setlocal EnableDelayedExpansion
 :: ============================================================
 
 :: ── SET THIS ─────────────────────────────────────────────────
-:: Syntax must be exactly:  set "VCVARS=<full path>"
-:: Example paths:
-::   set "VCVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-::   set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-
 set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 
 :: ─────────────────────────────────────────────────────────────
@@ -46,14 +41,12 @@ if not defined VCVARS (
     echo [ERROR] VCVARS is not set. Edit this script and set it.
     pause & exit /b 1
 )
-
 if not exist "!VCVARS!" (
     echo [ERROR] vcvars64.bat not found at:
     echo         !VCVARS!
     echo         Check the path is correct and the file exists.
     pause & exit /b 1
 )
-
 echo [ok] MSVC toolchain : !VCVARS!
 
 :: ── Activate MSVC environment ────────────────────────────────
@@ -64,6 +57,18 @@ echo [ok] MSVC environment activated.
 if not exist "%TOOLS%"  mkdir "%TOOLS%"
 if not exist "C:\Temp"  mkdir "C:\Temp"
 echo [ok] Directories ready.
+
+:: ── Uninstall old hook BEFORE building ───────────────────────
+:: Clears AppInit_DLLs so cmake/ninja launch without the stale
+:: dll during compilation. Re-registered after the fresh copy.
+echo.
+echo [install] Unregistering old hook.dll before rebuild...
+if exist "%BUILD%\install_hook.exe" (
+    "%BUILD%\install_hook.exe" uninstall >nul 2>&1
+    echo [ok] Old hook unregistered.
+) else (
+    echo [warn] install_hook.exe not found yet -- skipping uninstall.
+)
 
 :: ── CMake configure ──────────────────────────────────────────
 echo.
@@ -82,9 +87,57 @@ echo [build] Building...
 if %errorlevel% neq 0 ( echo [ERROR] Build failed. & pause & exit /b 1 )
 echo [ok] Build complete.
 
-:: ── Copy hook.dll to stable path ─────────────────────────────
-copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul
-echo [ok] hook.dll at %TOOLS%\hook.dll
+:: ── Force-copy new hook.dll to stable path ───────────────────
+:: The old dll may still be mapped into running processes even
+:: after uninstall (registry cleared but already-loaded images
+:: stay until those processes exit).  Strategy:
+::   1. Wait up to ~3s for processes to drain naturally.
+::   2. If still locked, use handle64 or taskkill on known holders.
+::   3. If still locked after that, rename the old file out of the
+::      way (rename always works even on a mapped dll) and copy
+::      the new one in under the original name.
+
+echo.
+echo [deploy] Copying new hook.dll to %TOOLS%...
+
+:: First attempt
+copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul 2>&1
+if %errorlevel% equ 0 goto :copy_ok
+
+echo [warn] hook.dll locked -- waiting 3s for processes to release it...
+ping -n 4 127.0.0.1 >nul
+
+:: Second attempt after wait
+copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul 2>&1
+if %errorlevel% equ 0 goto :copy_ok
+
+echo [warn] Still locked -- attempting rename workaround...
+
+:: Rename the locked file out of the way. Windows allows renaming
+:: a file that is mapped into memory; it just can't be deleted or
+:: overwritten while mapped.
+if exist "%TOOLS%\hook.dll.old" del /F "%TOOLS%\hook.dll.old" >nul 2>&1
+rename "%TOOLS%\hook.dll" "hook.dll.old" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Cannot rename old hook.dll -- it may be held by a
+    echo         system process.  Close all non-essential apps, then
+    echo         re-run this script.
+    pause & exit /b 1
+)
+
+:: Now copy the new file into the vacated name
+copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Copy failed even after rename. Check disk space and
+    echo         permissions on %TOOLS%.
+    pause & exit /b 1
+)
+
+:: The .old file will be cleaned up next run or on reboot
+echo [warn] Old hook.dll.old left in %TOOLS% -- safe to delete after reboot.
+
+:copy_ok
+echo [ok] hook.dll updated at %TOOLS%\hook.dll
 
 :: ── Install AppInit_DLLs ─────────────────────────────────────
 echo.

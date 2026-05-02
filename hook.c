@@ -897,6 +897,11 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID reserved)
             QueryPerformanceFrequency(&g_qpc_freq);
             CreateDirectoryW(L"C:\\Temp", NULL);
 
+            /* Resolve our own full path so inject_into_child
+             * can LoadLibraryW hook.dll into child processes. */
+            GetModuleFileNameW(hInst, g_hook_dll_path,
+                               ARRAYSIZE(g_hook_dll_path));
+
             LOG(LOG_INFO, L"hook.dll attached to PID %lu",
                 GetCurrentProcessId());
 
