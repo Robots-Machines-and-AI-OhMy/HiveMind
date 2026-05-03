@@ -34,6 +34,10 @@ private:
         string getName();
         string getUID();
         string getLeader();
+		
+		void setName(string newName);
+		void setUID(string newUID);
+		void setPassword(string newHash);
 
         bool validatePassword(string inputPassHash);
     };
@@ -46,8 +50,8 @@ private:
 	char* localIP; //the device's IP address
 
     Network currentNet; //current network device is member of, may be null
-    const int tickTime = 200; //heartbeat timing interval
-    const int heartbeatTimeout = 500; //timeout for getting heartbeat
+    const int tickTime = 200; //heartbeat timing interval in ms
+    const int heartbeatTimeout = 500; //timeout for getting heartbeat in ms
 
     // holds NetInfo structs, used for reporting scan results to UI
     vector<struct NetInfo> netInfo;
@@ -59,8 +63,9 @@ private:
     static mutex mtx; // lock object
     NetworkManager(bool testing);
 
-    void listenForScan();
-    void sendHeartbeat();
+    void listenForScan(); //async leader method, responds to scan msgs
+    void sendHeartbeat(); //async p2p member method, manages heartbeat logic
+	void memberInit(); // launches threads for async member operations e.g. heartbeat
 
 public:
 
@@ -78,7 +83,7 @@ public:
 
     bool createNetwork(string name, string password);
     bool leaveNetwork();
-    bool joinNetwork(string name, string UID, string password);
+    bool joinNetwork(string name, string UID, string passHash);
     void scan(); //scans for network (populates networkInfo vector)
 
     bool isConnected(); //returns true if currently connected to a network

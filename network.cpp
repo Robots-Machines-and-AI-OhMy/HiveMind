@@ -264,16 +264,25 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
 
     //startup winsock, this is mandatory so kill if error
     if (WSAStartup(MAKEWORD(2,2), &wsdata) != 0) {
-        printf("Issue with WS startup: %d\n", WSAGetLastError());
+        wprintf(L"Issue with WS startup: %d\n", WSAGetLastError());
         exit();
     }
     //Lsquic startup here
 }
 
 // internal async method, ran by leaders
+// listens for UDP messages on port 56713; responds with their network info
+// format:  <network-name>|<network-UID>|<passFlag>
+// passFlag is either "t" or "f"
+// pipe "|" is used as delimiter
 void NetworkManager::listenForScan() {
     // IPv4 UDP socket
     SOCKET scanListener = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (scanListener == INVALID_SOCKET) {
+		wprinf(L"socket failed with error: %ld\n", WSAGetLastError());
+		WSACleanup();
+		exit();
+	}
     struct sockaddr_in listenSpec;
     listenSpec.sin_family = AF_INET;
     listenSpec.sin_addr.s_addr = inet_addr(localIP);
@@ -299,7 +308,7 @@ void NetworkManager::listenForScan() {
 	else
 		networkInfo += "f";
 	
-	if ((int bindCode = bind(scanListener, listenSpec&, (int)(sizeof(listenSpec)))) != 0) {
+	if ((int bindCode = bind(scanListener, listenSpec&, sizeof(listenSpec))) != 0) {
 		printf("Error binding scan listener socket: %d", bindCode);
 		exit(); // there may be smarter alternatives to this
 	}
@@ -320,6 +329,9 @@ void NetworkManager::listenForScan() {
 }
 
 // internal async method
+// leaders will send heartbeat to their followers
+// followers will send metrics to the leader
+// performed over QUIC
 void NetworkManager::sendHeartbeat() {
     while (!halting) {
         if (nodeState == LEADER) {
@@ -331,14 +343,32 @@ void NetworkManager::sendHeartbeat() {
     }
 }
 
+// launches threads for async member methods
+// does not set node state
+// CANDIDATE state only exists when the async methods are functioning
+void NetworkManager::memberInit() {
+	switch (nodeState) {
+		case LEADER:
+			// launch scan listener
+		case FOLLOWER: 
+			// launch heartbeat
+		default:
+			// does nothing
+			break;
+	}
+}
+
 
 // creates a network with specified name and password
 // password may be null
 // returns true if network successfully created
 bool NetworkManager::createNetwork(string name, string passHash) {
-    currentNet = Network(name, hostname, passHash);
-
-    //perform rest of setup logic here
+    currentNet.setName(name);
+	currentNet.setUID(); // generate UID
+	currentNet.setPassword(passHash);
+	
+	nodeState = LEADER; // creating node is the leader of network by default
+	memberInit(); // initialize async methods
 
     return true; //success
 }
@@ -369,9 +399,24 @@ bool NetworkManager::joinNetwork(string name, string UID, string passHash) {
 
 //scans for networks by broadcasting UDP port 56713
 void NetworkManager::scan() {
-    // initialize UDP socket(s)
-
-    // send broadcast message
+    // initialize UDP socket
+	SOCKET scanner = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	
+	if (scanner == INVALID_SOCKET) {
+		wprinf(L"socket failed with error: %ld\n", WSAGetLastError());
+		WSACleanup();
+		exit();
+	}
+    // send net info request message
+	BOOL bOpt = TRUE;
+	int bOptLen = sizeof (BOOL);
+	// set socket to broadcast
+	int broadcastSetCode = setsockopt(scanner, SOL_SOCKET, SO_BROADCAST, (char*) &bOpt, bOptLen);
+	if (broadcastSetCode != 0) {
+		wprintf(L"setsockopt for SO_BROADCAST failed with error %u\n", WSAGetLastError());
+		WSACleanup();
+		exit();
+	}
 
     // collect responses, populate netInfo vector
 
