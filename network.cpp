@@ -308,12 +308,11 @@ void NetworkManager::listenForScan() {
         // thread will spin around in here, perform one response per iteration
 		
 		// receive packet (broadcast from scan function)
+		// note: recvfrom is a blocking method
 		recvResult = recvfrom(scanListener, reqbuf&, reqbuflen, 0, requestAddr&, sizeof(requestAddr));
-		if (recvResult <= 0)
-			continue; // sender should've sent something
 		
 		// send response 
-		
+		sendResult = sendto(scanListener, sendbuf&, sendbuflen, 0, requestAddr&, sizeof(requestAddr)); 
 		
     }
     // close UDP socket
