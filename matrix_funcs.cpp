@@ -27,7 +27,7 @@ int calculate(int size, long timeout) {
     long long start = std::chrono::time_point_cast<std::chrono::nanoseconds>(
             std::chrono::high_resolution_clock::now()
         ).time_since_epoch().count();
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2) OMP_PROC_BIND=true OMP_PLACES=cores
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {
             if (
