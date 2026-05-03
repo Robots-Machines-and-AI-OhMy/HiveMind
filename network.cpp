@@ -221,9 +221,9 @@ public:
 */
 
 // network constructor, password may be NULL
-NetworkManager::Network::Network(string netName, string leader, string pass) {
+NetworkManager::Network::Network(string netName, string leader, string passHash) {
     name = netName;
-    password = pass;
+    password = passHash;
     leadIP = leader;
 }
 
@@ -295,8 +295,8 @@ void NetworkManager::sendHeartbeat() {
 // creates a network with specified name and password
 // password may be null
 // returns true if network successfully created
-bool NetworkManager::createNetwork(string name, string password) {
-    currentNet = Network(name, hostname, password);
+bool NetworkManager::createNetwork(string name, string passHash) {
+    currentNet = Network(name, hostname, passHash);
 
     //perform rest of setup logic here
 
@@ -323,7 +323,7 @@ bool NetworkManager::leaveNetwork() {
 // attempts to join network of specified name and password
 // password may be null
 // returns true if success, false if there was an error
-bool NetworkManager::joinNetwork(string name, string UID, string password) {
+bool NetworkManager::joinNetwork(string name, string UID, string passHash) {
     return false; //replace with join logic later
 }
 
@@ -337,7 +337,8 @@ void NetworkManager::scan() {
 
 }
 
-// runs metric calculation algorithm
+// runs dynamic metric calculation algorithm
+// metrics sent to leader during heartbeat
 double NetworkManager::calculateMetrics() {
     return -1.0; //replace with algorithm
 }
