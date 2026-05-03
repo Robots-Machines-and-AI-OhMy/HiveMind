@@ -297,12 +297,12 @@ void NetworkManager::listenForScan() {
 	int sendbuflen = 128; // length of send buffer
 	char sendbuf[sendbuflen]; // holds message to send
 	
-	//network info format: <network-name>|<network-UID>|<passFlag>
+	//network info format: <network-name>|<network-UID>|<leader-IP>|<passFlag>
 	//network-name: name of the network
 	//network-UID: UID of the network
 	//passFlag: whether the network has a password, either "t" for yes or "f" for no
 	//pipe character "|" used as a delimiter; it follows that the delimiter cannot be a part of delimited members
-	string networkInfo = currentNet.getName() + "|" + currentNet.getUID() + "|";
+	string networkInfo = currentNet.getName() + "|" + currentNet.getUID() + "|" + currentNet.getLeader() + "|";
 	if (currentNet.isPass())
 		networkInto += "t";
 	else
@@ -438,11 +438,41 @@ void NetworkManager::scan() {
 
     // collect responses, populate netInfo vector
 	int bytesReceived;
+	struct NetInfo receivedNet;
 	// this loop technically cannot break since recv is blocking
 	// implement timing mechanism here to force the loop to exit after specified time
-	// 2 seconds is probably enough (2000 ms)
+	int maxTimeMS = 2000; // time to pick up networks
+	netInfo = new vector<struct NetInfo>(); // wipe old network list; avoids stale data
 	while ((bytesReceived = recv(scanner, recBuf, recBufLen, 0)) != 0) {
-		//
+		netInfo.push_back(new struct NetInfo);
+		//initialize
+		receivedNet = netInfo.get(netInfo.length - 1);
+		receivedNet.name = "";
+		receivedNet.UID = "";
+		receivedNet.leadIP = "";
+		int i = 0; // buffer iterator
+		//name
+		while (recBuf[i] != '|' && recBuf[i] != '\0') {
+			receivedNet.name += recBuf[i];
+		}
+		i++; //skip pipe char
+		//UID
+		while (recBuf[i] != '|' && recBuf[i] != '\0') {
+			receivedNet.UID += recBuf[i];
+		}
+		i++; //skip pipe char
+		//Leader IP
+		while (recBuf[i] != '|' && recBuf[i] != '\0') {
+			receivedNet.leadIP += recBuf[i];
+		}
+		i++;
+		//pass flag
+		if (recBuf[i] == 't')
+			receivedNet.passFlag = true;
+		else
+			receivedNet.passFlag = false;
+		
+		// check time; make sure maxTimeMS has not fully elapsed
 	}
 
 }
