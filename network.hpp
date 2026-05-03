@@ -42,7 +42,8 @@ private:
 
     status nodeState; //current state, see enum above
     double perfScore; //performance score
-    char* hostname; //the device's hostname
+    hostent* hostname; //the device's hostname
+	char* localIP; //the device's IP address
 
     Network currentNet; //current network device is member of, may be null
     const int tickTime = 200; //heartbeat timing interval

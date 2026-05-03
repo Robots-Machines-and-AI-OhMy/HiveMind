@@ -223,12 +223,20 @@ public:
 // network constructor, password may be NULL
 NetworkManager::Network::Network(string netName, string leader, string passHash) {
     name = netName;
+	//UID init
     password = passHash;
     leadIP = leader;
 }
 
 string NetworkManager::Network::getName() { return name; }
+string NetworkManager::Network::getUID() { return UID; }
 string NetworkManager::Network::getLeader() { return leadIP; }
+bool NetworkManager::Network::isPass() {
+	if (password == NULL)
+		return false; 
+	else
+		return true;
+}
 
 // accepts a password hash and compares it to this network
 // returns true if the hashes match
@@ -245,9 +253,8 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
     test = testing;
 
     nodeState = NONE;
-    hostname = (char*)malloc(256 * sizeof(char));
-    gethostname(hostname, 256);
-
+    hostname = gethostbyname(""); 
+	localIP = inet_ntoa(*(struct in_addr *)*localHost->h_addr_list); // get this device's IP
     //currentNet = new this->Network::Network("null", "none", "na"); //random inapplicable values
 
     netInfo = new vector<struct NetInfo>();
@@ -269,11 +276,45 @@ void NetworkManager::listenForScan() {
     SOCKET scanListener = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     struct sockaddr_in listenSpec;
     listenSpec.sin_family = AF_INET;
-    listenSpec.sin_addr.s_addr = INADDR_ANY;
-    listenSpec.sin_port = htons(56713);
+    listenSpec.sin_addr.s_addr = inet_addr(localIP);
+    listenSpec.sin_port = htons(56713); //listen on port 56713
+	
+	int reqbuflen = 32; // length of recv buffer
+	char reqbuf[reqbuflen]; // holds request message
+	sockaddr requestAddr; // holds request source address
+	int recvResult; // observing how successful receive is
+	
+	int sendResult; // observing how successful send operation is
+	int sendbuflen = 128; // length of send buffer
+	char sendbuf[sendbuflen]; // holds message to send
+	
+	//network info format: <network-name>|<network-UID>|<passFlag>
+	//network-name: name of the network
+	//network-UID: UID of the network
+	//passFlag: whether the network has a password, either "t" for yes or "f" for no
+	//pipe character "|" used as a delimiter; it follows that the delimiter cannot be a part of delimited members
+	string networkInfo = currentNet.getName() + "|" + currentNet.getUID() + "|";
+	if (currentNet.isPass())
+		networkInto += "t";
+	else
+		networkInfo += "f";
+	
+	if ((int bindCode = bind(scanListener, listenSpec&, (int)(sizeof(listenSpec)))) != 0) {
+		printf("Error binding scan listener socket: %d", bindCode);
+		exit(); // there may be smarter alternatives to this
+	}
 
     while (!halting && nodeState == LEADER) {
-        // wait here
+        // thread will spin around in here, perform one response per iteration
+		
+		// receive packet (broadcast from scan function)
+		recvResult = recvfrom(scanListener, reqbuf&, reqbuflen, 0, requestAddr&, sizeof(requestAddr));
+		if (recvResult <= 0)
+			continue; // sender should've sent something
+		
+		// send response 
+		
+		
     }
     // close UDP socket
     closesocket(scanListener);
