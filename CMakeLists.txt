@@ -137,3 +137,7 @@ add_executable(MindMesh
         HiveMindCLI.cpp
         network.cpp
 )
+
+add_executable(matrix_tests
+        compute_check.cpp
+)
