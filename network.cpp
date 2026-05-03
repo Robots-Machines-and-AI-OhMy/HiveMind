@@ -285,7 +285,7 @@ void NetworkManager::listenForScan() {
 	}
     struct sockaddr_in listenSpec;
     listenSpec.sin_family = AF_INET;
-    listenSpec.sin_addr.s_addr = inet_addr(localIP);
+    listenSpec.sin_addr.s_addr = INADDR_ANY; //accept any IP
     listenSpec.sin_port = htons(56713); //listen on port 56713
 	
 	int reqbuflen = 32; // length of recv buffer
@@ -307,6 +307,8 @@ void NetworkManager::listenForScan() {
 		networkInto += "t";
 	else
 		networkInfo += "f";
+	
+	strcpy(sendbuf, c_str(networkInfo));
 	
 	if ((int bindCode = bind(scanListener, listenSpec&, sizeof(listenSpec))) != 0) {
 		printf("Error binding scan listener socket: %d", bindCode);
@@ -407,9 +409,10 @@ void NetworkManager::scan() {
 		WSACleanup();
 		exit();
 	}
-    // send net info request message
+    // specify socket
 	BOOL bOpt = TRUE;
 	int bOptLen = sizeof (BOOL);
+	
 	// set socket to broadcast
 	int broadcastSetCode = setsockopt(scanner, SOL_SOCKET, SO_BROADCAST, (char*) &bOpt, bOptLen);
 	if (broadcastSetCode != 0) {
@@ -417,8 +420,30 @@ void NetworkManager::scan() {
 		WSACleanup();
 		exit();
 	}
+	
+	// send broadcast message
+	struct sockaddr_in scanSpec; 
+	scanSpec.sin_family = AF_INET;
+	scanSpec.sin_port = htons(56713);
+	scanSpec.sin_addr.s_addr = inet_addr("255.255.255.255"); // broadcast address
+	int sendResult = sendto(s, "", 0, 0, scanSpec&, sizeof(scanSpec)); // send empty datagram
+	if (sendResult == SOCKET_ERROR) {
+		wprintf(L"send error: %d\n", WSAGetLastError());
+	}
+	
+	int recBufLen = 128; 
+	char* recBuf[recBufLen];
+	
+	sleep(1); //brief pause to get network responses
 
     // collect responses, populate netInfo vector
+	int bytesReceived;
+	// this loop technically cannot break since recv is blocking
+	// implement timing mechanism here to force the loop to exit after specified time
+	// 2 seconds is probably enough (2000 ms)
+	while ((bytesReceived = recv(scanner, recBuf, recBufLen, 0)) != 0) {
+		//
+	}
 
 }
 
