@@ -1,6 +1,6 @@
 #include <iostream>
 #include <string>
-#include "network.hpp"
+//#include "network.hpp"
 #include "compute_check.hpp"
 #include "global.hpp"
 
@@ -41,7 +41,7 @@ int main() {
 
     //NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
 
-    cout << metric;
+    cout << "Metric Score: " << metric << endl;
     cout << "=============================\n";
     cout << "     HiveMind CLI System\n";
     cout << "=============================\n";

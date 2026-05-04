@@ -19,8 +19,8 @@ if (NOT MSVC)
 endif()
 
 # NuRAFT:
-FetchContent_Declare(NuRaft GIT_REPOSITORY https://github.com/eBay/NuRaft.git ...)
-target_link_libraries(your_target PRIVATE NuRaft::NuRaft)
+#FetchContent_Declare(NuRaft GIT_REPOSITORY https://github.com/eBay/NuRaft.git ...)
+#target_link_libraries(your_target PRIVATE NuRaft::NuRaft)
 
 # /EHa (async SEH) is only needed for hook.c which uses __try/__except.
 # Applied per-target to avoid D9025 warning from overriding CMake's
