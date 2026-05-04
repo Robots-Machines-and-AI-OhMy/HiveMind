@@ -55,7 +55,7 @@ private:
     const int heartbeatTimeout = 500; //timeout for getting heartbeat in ms
 
     // holds NetInfo structs, used for reporting scan results to UI
-    vector<struct NetInfo> netInfo;
+    vector<struct P2PNetInfo> netInfo;
 
     WSADATA wsdata;
 
@@ -91,7 +91,7 @@ public:
 
     void cleanup();
 
-    vector<struct NetInfo> getNetworkInfo();
+    vector<struct P2PNetInfo> getNetworkInfo();
 };
 
 #endif
