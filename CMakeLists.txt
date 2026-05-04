@@ -134,8 +134,11 @@ endforeach()
 # MindMesh (teammate target — untouched)
 # ============================================================
 add_executable(MindMesh
+        compute_check.cpp
+        matrix_funcs.cpp
+
         HiveMindCLI.cpp
-        network.cpp
+        #network.cpp
 )
 
 add_executable(matrix_tests

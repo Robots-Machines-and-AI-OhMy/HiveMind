@@ -285,7 +285,7 @@ void NetworkManager::listenForScan() {
 	}
     struct sockaddr_in listenSpec;
     listenSpec.sin_family = AF_INET;
-    listenSpec.sin_addr.s_addr = inet_addr(localIP);
+    listenSpec.sin_addr.s_addr = INADDR_ANY; //accept any IP
     listenSpec.sin_port = htons(56713); //listen on port 56713
 	
 	int reqbuflen = 32; // length of recv buffer
@@ -297,16 +297,18 @@ void NetworkManager::listenForScan() {
 	int sendbuflen = 128; // length of send buffer
 	char sendbuf[sendbuflen]; // holds message to send
 	
-	//network info format: <network-name>|<network-UID>|<passFlag>
+	//network info format: <network-name>|<network-UID>|<leader-IP>|<passFlag>
 	//network-name: name of the network
 	//network-UID: UID of the network
 	//passFlag: whether the network has a password, either "t" for yes or "f" for no
 	//pipe character "|" used as a delimiter; it follows that the delimiter cannot be a part of delimited members
-	string networkInfo = currentNet.getName() + "|" + currentNet.getUID() + "|";
+	string networkInfo = currentNet.getName() + "|" + currentNet.getUID() + "|" + currentNet.getLeader() + "|";
 	if (currentNet.isPass())
 		networkInto += "t";
 	else
 		networkInfo += "f";
+	
+	strcpy(sendbuf, c_str(networkInfo));
 	
 	if ((int bindCode = bind(scanListener, listenSpec&, sizeof(listenSpec))) != 0) {
 		printf("Error binding scan listener socket: %d", bindCode);
@@ -407,9 +409,10 @@ void NetworkManager::scan() {
 		WSACleanup();
 		exit();
 	}
-    // send net info request message
+    // specify socket
 	BOOL bOpt = TRUE;
 	int bOptLen = sizeof (BOOL);
+	
 	// set socket to broadcast
 	int broadcastSetCode = setsockopt(scanner, SOL_SOCKET, SO_BROADCAST, (char*) &bOpt, bOptLen);
 	if (broadcastSetCode != 0) {
@@ -417,8 +420,60 @@ void NetworkManager::scan() {
 		WSACleanup();
 		exit();
 	}
+	
+	// send broadcast message
+	struct sockaddr_in scanSpec; 
+	scanSpec.sin_family = AF_INET;
+	scanSpec.sin_port = htons(56713);
+	scanSpec.sin_addr.s_addr = inet_addr("255.255.255.255"); // broadcast address
+	int sendResult = sendto(s, "", 0, 0, scanSpec&, sizeof(scanSpec)); // send empty datagram
+	if (sendResult == SOCKET_ERROR) {
+		wprintf(L"send error: %d\n", WSAGetLastError());
+	}
+	
+	int recBufLen = 128; 
+	char* recBuf[recBufLen];
+	
+	sleep(1); //brief pause to get network responses
 
     // collect responses, populate netInfo vector
+	int bytesReceived;
+	struct NetInfo receivedNet;
+	// this loop technically cannot break since recv is blocking
+	// implement timing mechanism here to force the loop to exit after specified time
+	int maxTimeMS = 2000; // time to pick up networks
+	netInfo = new vector<struct NetInfo>(); // wipe old network list; avoids stale data
+	while ((bytesReceived = recv(scanner, recBuf, recBufLen, 0)) != 0) {
+		netInfo.push_back(new struct NetInfo);
+		//initialize
+		receivedNet = netInfo.get(netInfo.length - 1);
+		receivedNet.name = "";
+		receivedNet.UID = "";
+		receivedNet.leadIP = "";
+		int i = 0; // buffer iterator
+		//name
+		while (recBuf[i] != '|' && recBuf[i] != '\0') {
+			receivedNet.name += recBuf[i];
+		}
+		i++; //skip pipe char
+		//UID
+		while (recBuf[i] != '|' && recBuf[i] != '\0') {
+			receivedNet.UID += recBuf[i];
+		}
+		i++; //skip pipe char
+		//Leader IP
+		while (recBuf[i] != '|' && recBuf[i] != '\0') {
+			receivedNet.leadIP += recBuf[i];
+		}
+		i++;
+		//pass flag
+		if (recBuf[i] == 't')
+			receivedNet.passFlag = true;
+		else
+			receivedNet.passFlag = false;
+		
+		// check time; make sure maxTimeMS has not fully elapsed
+	}
 
 }
 
