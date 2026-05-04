@@ -70,6 +70,20 @@ if exist "%BUILD%\install_hook.exe" (
     echo [warn] install_hook.exe not found yet -- skipping uninstall.
 )
 
+:: ── Wipe stale build cache ───────────────────────────────────
+:: Required when CMakeLists.txt changes (e.g. new add_dependencies
+:: edges). Ninja caches the dependency graph; without a clean wipe
+:: it will not see the updated edges and skips building hook.dll /
+:: offload_hook.dll before the executables link.
+echo.
+echo [build] Cleaning build directory...
+if exist "%BUILD%" (
+    rmdir /S /Q "%BUILD%"
+    echo [ok] Build directory wiped.
+) else (
+    echo [ok] Build directory did not exist -- skipping clean.
+)
+
 :: ── CMake configure ──────────────────────────────────────────
 echo.
 echo [build] Configuring...
@@ -87,54 +101,25 @@ echo [build] Building...
 if %errorlevel% neq 0 ( echo [ERROR] Build failed. & pause & exit /b 1 )
 echo [ok] Build complete.
 
-:: ── Force-copy new hook.dll to stable path ───────────────────
-:: The old dll may still be mapped into running processes even
-:: after uninstall (registry cleared but already-loaded images
-:: stay until those processes exit).  Strategy:
-::   1. Wait up to ~3s for processes to drain naturally.
-::   2. If still locked, use handle64 or taskkill on known holders.
-::   3. If still locked after that, rename the old file out of the
-::      way (rename always works even on a mapped dll) and copy
-::      the new one in under the original name.
+:: ── Copy new hook.dll to stable path (retry loop) ────────────
+:: The old dll may still be mapped into processes that loaded it
+:: via AppInit_DLLs before the registry key was cleared. Clearing
+:: the key stops new loads but does not unmap already-loaded images.
+:: We simply retry every 2s until the copy succeeds -- as processes
+:: that hold the DLL exit naturally it will eventually release.
+:: There is no timeout: press Ctrl-C to abort if needed.
 
 echo.
 echo [deploy] Copying new hook.dll to %TOOLS%...
+echo [deploy] Retrying every 2s until all holders release the file.
+echo [deploy] Press Ctrl-C to abort.
 
-:: First attempt
+:copy_retry
 copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul 2>&1
 if %errorlevel% equ 0 goto :copy_ok
-
-echo [warn] hook.dll locked -- waiting 3s for processes to release it...
-ping -n 4 127.0.0.1 >nul
-
-:: Second attempt after wait
-copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul 2>&1
-if %errorlevel% equ 0 goto :copy_ok
-
-echo [warn] Still locked -- attempting rename workaround...
-
-:: Rename the locked file out of the way. Windows allows renaming
-:: a file that is mapped into memory; it just can't be deleted or
-:: overwritten while mapped.
-if exist "%TOOLS%\hook.dll.old" del /F "%TOOLS%\hook.dll.old" >nul 2>&1
-rename "%TOOLS%\hook.dll" "hook.dll.old" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Cannot rename old hook.dll -- it may be held by a
-    echo         system process.  Close all non-essential apps, then
-    echo         re-run this script.
-    pause & exit /b 1
-)
-
-:: Now copy the new file into the vacated name
-copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Copy failed even after rename. Check disk space and
-    echo         permissions on %TOOLS%.
-    pause & exit /b 1
-)
-
-:: The .old file will be cleaned up next run or on reboot
-echo [warn] Old hook.dll.old left in %TOOLS% -- safe to delete after reboot.
+echo [wait]  hook.dll still locked -- retrying in 2s...
+ping -n 3 127.0.0.1 >nul
+goto :copy_retry
 
 :copy_ok
 echo [ok] hook.dll updated at %TOOLS%\hook.dll

@@ -55,6 +55,13 @@ target_link_libraries(offload_hook PRIVATE kernel32)
 add_executable(install_hook install_hook.cpp)
 target_link_libraries(install_hook PRIVATE advapi32)
 
+# FIX: Ensure hook.dll and offload_hook.dll are fully built before
+# install_hook or test_runner attempt to link and run post-build
+# copy steps. Without this, parallel Ninja builds (e.g. -j N) can
+# schedule the executable link — and its POST_BUILD copy of hook.dll
+# — before hook.dll itself has finished compiling and linking.
+add_dependencies(install_hook hook offload_hook)
+
 # Embed a UAC manifest requesting Administrator elevation.
 # This triggers the UAC prompt when the exe is launched from
 # CLion, Explorer, or the command line.
@@ -99,12 +106,18 @@ endif()
 add_executable(test_runner Hook_Test.cpp)
 target_link_libraries(test_runner PRIVATE kernel32)
 
+# FIX: Same dependency guard for test_runner (see install_hook note above).
+add_dependencies(test_runner hook offload_hook)
+
 # ============================================================
 # POST-BUILD: copy DLLs next to each executable
 #
-# Also copies hook.dll to C:\Tools\ so install_hook.exe can
-# register it at that stable path.  C:\Tools\ must exist;
-# create it once manually or the copy is silently skipped.
+# The C:\Tools copy is intentionally omitted here. hook.dll may
+# still be mapped into running processes from a prior AppInit_DLLs
+# registration, making it locked. CMake's copy_if_different cannot
+# handle a locked file and will fail the build. hook_test.bat handles
+# this copy after the build completes, using a retry loop and rename
+# workaround that works on locked DLLs.
 #
 # To register after build:
 #   Run the install_hook target from CLion (UAC prompt appears)
@@ -119,12 +132,6 @@ foreach(TARGET_EXE test_runner install_hook)
             $<TARGET_FILE:hook>
             $<TARGET_FILE:offload_hook>
             $<TARGET_FILE_DIR:${TARGET_EXE}>
-
-            # Copy hook.dll to stable registration path.
-            # Silent no-op if C:\Tools does not exist.
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:hook>
-            "C:/Tools/hook.dll"
 
             COMMENT "Copying DLLs for ${TARGET_EXE}"
     )
