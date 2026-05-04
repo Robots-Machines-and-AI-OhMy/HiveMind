@@ -1,12 +1,10 @@
 #include <iostream>
 #include <string>
-//#include "network.hpp"
+#include "network.hpp"
 #include "compute_check.hpp"
 #include "global.hpp"
 
 using namespace std;
-
-
 
 enum Command {
     HELP,
