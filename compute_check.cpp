@@ -11,7 +11,7 @@ double metric_calculation() {
     double scores[3] = {0.0, 0.0, 0.0};
     bool flag = false;
     for (int i = 0; i < 3; i++) {
-        int score = 0.0;
+        int score = 0;
         double count;
         for (count = 0.0; count < 5.0; count++) {
             int time = calculate(sizes[i], 200*pow(10, 6));
@@ -19,8 +19,8 @@ double metric_calculation() {
                 flag = true;
                 break;
             }
+            score += time;
             if (time < 5*pow(10,6)) {
-                score += time;
                 break;
             }
         }

@@ -27,6 +27,7 @@ int calculate(int size, long timeout) {
     long long start = std::chrono::time_point_cast<std::chrono::nanoseconds>(
             std::chrono::high_resolution_clock::now()
         ).time_since_epoch().count();
+    bool flag = false;
     #pragma omp parallel for collapse(2) omp_schedule(static)
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {
@@ -34,7 +35,13 @@ int calculate(int size, long timeout) {
                 std::chrono::time_point_cast<std::chrono::nanoseconds>(
                     std::chrono::high_resolution_clock::now()
                     ).time_since_epoch().count() - start > timeout
-                ) continue;
+                ) {
+                #pragma omp single
+                {
+                    flag = true;
+                }
+                continue;
+            }
             int sum = 0;
             for (int k = 0; k < size; k++) {
                 sum += matrix1[i*size+k] * matrix2[k*size+j];
@@ -49,5 +56,6 @@ int calculate(int size, long timeout) {
     free(matrix2);
     free(matrix3);
     int difference = end - start;
+    if (flag) return -1;
     return difference;
 }
