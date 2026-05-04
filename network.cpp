@@ -7,7 +7,7 @@
 #include <iostream>
 #include <string>
 #include <vector> // basically array lists
-#include <chrono> // time keeper
+#include <chrono> // timekeeper
 #include <winsock2.h> // networking package
 #include <thread> // for async operations
 #include <mutex> // locking mechanisms
