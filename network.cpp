@@ -304,11 +304,11 @@ void NetworkManager::listenForScan() {
 	//pipe character "|" used as a delimiter; it follows that the delimiter cannot be a part of delimited members
 	string networkInfo = currentNet.getName() + "|" + currentNet.getUID() + "|" + currentNet.getLeader() + "|";
 	if (currentNet.isPass())
-		networkInto += "t";
+		networkInfo += "t";
 	else
 		networkInfo += "f";
 	
-	strcpy(sendbuf, c_str(networkInfo));
+	strcpy(sendbuf, networkInfo.c_str());
 	
 	if ((int bindCode = bind(scanListener, listenSpec&, sizeof(listenSpec))) != 0) {
 		printf("Error binding scan listener socket: %d", bindCode);
