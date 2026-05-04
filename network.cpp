@@ -280,7 +280,7 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
 // pipe "|" is used as delimiter
 void NetworkManager::listenForScan() {
     // IPv4 UDP socket
-    SOCKET scanListener = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    SOCKET scanListener = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (scanListener == INVALID_SOCKET) {
 		wprintf(L"socket failed with error: %ld\n", WSAGetLastError());
 		WSACleanup();
