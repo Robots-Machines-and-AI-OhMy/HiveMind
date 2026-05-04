@@ -34,6 +34,7 @@ private:
         string getName();
         string getUID();
         string getLeader();
+        bool isPass();
 		
 		void setName(string newName);
 		void setUID(string newUID);

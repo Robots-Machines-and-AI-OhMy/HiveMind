@@ -83,7 +83,7 @@ private:
         //startup winsock, this is mandatory so kill if error
         if (WSAStartup(MAKEWORD(2,2), &wsdata) != 0) {
             printf("Issue with WS startup: %d\n", WSAGetLastError());
-            exit();
+            exit(0);
         }
         //Lsquic startup here
     }
@@ -229,10 +229,10 @@ NetworkManager::Network::Network(string netName, string leader, string passHash)
 }
 
 string NetworkManager::Network::getName() { return name; }
-string NetworkManager::Network::getUID() { return UID; }
+//string NetworkManager::Network::getUID() { return UID; }
 string NetworkManager::Network::getLeader() { return leadIP; }
 bool NetworkManager::Network::isPass() {
-	if (password == NULL)
+	if (password == "")
 		return false; 
 	else
 		return true;
@@ -257,6 +257,9 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
 	localIP = inet_ntoa(*(struct in_addr *)*localHost->h_addr_list); // get this device's IP
     //currentNet = new this->Network::Network("null", "none", "na"); //random inapplicable values
 
+	/*vector<NetInfo> networks;
+
+	networks = vector<NetInfo>();*/
     netInfo = new vector<struct NetInfo>();
     halting = false;
 
@@ -265,7 +268,7 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
     //startup winsock, this is mandatory so kill if error
     if (WSAStartup(MAKEWORD(2,2), &wsdata) != 0) {
         wprintf(L"Issue with WS startup: %d\n", WSAGetLastError());
-        exit();
+        exit(0);
     }
     //Lsquic startup here
 }
@@ -281,7 +284,7 @@ void NetworkManager::listenForScan() {
 	if (scanListener == INVALID_SOCKET) {
 		wprinf(L"socket failed with error: %ld\n", WSAGetLastError());
 		WSACleanup();
-		exit();
+		exit(0);
 	}
     struct sockaddr_in listenSpec;
     listenSpec.sin_family = AF_INET;
@@ -312,7 +315,7 @@ void NetworkManager::listenForScan() {
 	
 	if ((int bindCode = bind(scanListener, listenSpec&, sizeof(listenSpec))) != 0) {
 		printf("Error binding scan listener socket: %d", bindCode);
-		exit(); // there may be smarter alternatives to this
+		exit(0); // there may be smarter alternatives to this
 	}
 
     while (!halting && nodeState == LEADER) {
@@ -384,7 +387,9 @@ bool NetworkManager::leaveNetwork() {
         halting = true;
 
         //wipe network
-        Network currentNet = NULL;
+    	currentNet.setName("");
+    	currentNet.setUID(""); // generate UID
+    	currentNet.setPassword("");
         return true;
     }
     catch (...) {
@@ -402,12 +407,12 @@ bool NetworkManager::joinNetwork(string name, string UID, string passHash) {
 //scans for networks by broadcasting UDP port 56713
 void NetworkManager::scan() {
     // initialize UDP socket
-	SOCKET scanner = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	SOCKET scanner = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	
 	if (scanner == INVALID_SOCKET) {
-		wprinf(L"socket failed with error: %ld\n", WSAGetLastError());
+		wprintf(L"socket failed with error: %ld\n", WSAGetLastError());
 		WSACleanup();
-		exit();
+		exit(0);
 	}
     // specify socket
 	BOOL bOpt = TRUE;
@@ -418,7 +423,7 @@ void NetworkManager::scan() {
 	if (broadcastSetCode != 0) {
 		wprintf(L"setsockopt for SO_BROADCAST failed with error %u\n", WSAGetLastError());
 		WSACleanup();
-		exit();
+		exit(0);
 	}
 	
 	// send broadcast message
@@ -426,7 +431,7 @@ void NetworkManager::scan() {
 	scanSpec.sin_family = AF_INET;
 	scanSpec.sin_port = htons(56713);
 	scanSpec.sin_addr.s_addr = inet_addr("255.255.255.255"); // broadcast address
-	int sendResult = sendto(s, "", 0, 0, scanSpec&, sizeof(scanSpec)); // send empty datagram
+	int sendResult = sendto(scanner, "", 0, 0, scanSpec&, sizeof(scanSpec)); // send empty datagram
 	if (sendResult == SOCKET_ERROR) {
 		wprintf(L"send error: %d\n", WSAGetLastError());
 	}
@@ -434,7 +439,8 @@ void NetworkManager::scan() {
 	int recBufLen = 128; 
 	char* recBuf[recBufLen];
 	
-	sleep(1); //brief pause to get network responses
+	this_thread::sleep_for(chrono::seconds(1));  ; //brief pause to get network responses
+
 
     // collect responses, populate netInfo vector
 	int bytesReceived;
@@ -488,7 +494,7 @@ double NetworkManager::calculateMetrics() {
 void NetworkManager::cleanup() {
     // disconnect from current net if applicable
     bool discSuccess = false;
-    if (currentNet != NULL) {
+    if (currentNet.getName()=="") {
         discSuccess = leaveNetwork();
     }
     else {
