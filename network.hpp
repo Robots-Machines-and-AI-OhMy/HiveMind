@@ -25,14 +25,15 @@ private:
     class Network {
     private:
         string name; //name of network
-        string netUID; //UID of network
+        uint8_t netUID[SHA256_DIGEST_SIZE]; //UID of network
         string leadIP; //leader's IP address
-        string password; //hash of password, may be null
+        uint8_t passHash[SHA256_DIGEST_SIZE]; //hash of password, may be empty string
+		bool passValid; 
     public:
         Network(string netName, string leader, string pass);
 
         string getName();
-        string getUID();
+        uint8_t* getUID();
         string getLeader();
         bool isPass();
 
@@ -63,7 +64,8 @@ private:
     NetworkManager* netmgr; // pointer to singleton obj
     static mutex mtx; // lock object
     NetworkManager(bool testing);
-
+	
+	vector<thread> asyncOps; //track launched threads
     void listenForScan(); //async leader method, responds to scan msgs
     void sendHeartbeat(); //async p2p member method, manages heartbeat logic
 	void memberInit(); // launches threads for async member operations e.g. heartbeat

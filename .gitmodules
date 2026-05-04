@@ -1,3 +1,6 @@
 [submodule "msquic"]
 	path = msquic
 	url = https://github.com/microsoft/msquic
+[submodule "tiny-sha"]
+	path = tiny-sha
+	url = https://github.com/0xNullll/tiny-sha
