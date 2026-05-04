@@ -282,7 +282,7 @@ void NetworkManager::listenForScan() {
     // IPv4 UDP socket
     SOCKET scanListener = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (scanListener == INVALID_SOCKET) {
-		wprinf(L"socket failed with error: %ld\n", WSAGetLastError());
+		wprintf(L"socket failed with error: %ld\n", WSAGetLastError());
 		WSACleanup();
 		exit(0);
 	}
@@ -313,9 +313,11 @@ void NetworkManager::listenForScan() {
 	
 	strcpy(sendbuf, networkInfo.c_str());
 	
-	if ((int bindCode = bind(scanListener, listenSpec&, sizeof(listenSpec))) != 0) {
-		printf("Error binding scan listener socket: %d", bindCode);
-		exit(0); // there may be smarter alternatives to this
+	int bindCode = bind(scanListener, (struct sockaddr*)&listenSpec, sizeof(listenSpec));
+
+	if (bindCode == SOCKET_ERROR) {
+		printf("Error binding scan listener socket: %d\n", WSAGetLastError());
+		exit(1);
 	}
 
     while (!halting && nodeState == LEADER) {
