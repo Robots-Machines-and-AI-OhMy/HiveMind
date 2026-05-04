@@ -229,6 +229,7 @@ bool NetworkManager::leaveNetwork() {
         //wipe network
     	currentNet.setName("");
     	currentNet.setPassword("");
+		nodeState = NONE; 
         return true;
     }
     catch (...) {
@@ -240,7 +241,15 @@ bool NetworkManager::leaveNetwork() {
 // password may be null
 // returns true if success, false if there was an error
 bool NetworkManager::joinNetwork(string name, string UID, string password) {
-    return false; //replace with join logic later
+    for (struct P2PNetInfo net : netInfo) {
+		if (net.getName() == name) {
+			if (net.getUID() == UID) {
+				// match, send join request
+				
+			}
+		}
+	}
+	return false; //network not found
 }
 
 //scans for networks by broadcasting UDP port 56713

@@ -4,3 +4,6 @@
 [submodule "tiny-sha"]
 	path = tiny-sha
 	url = https://github.com/0xNullll/tiny-sha
+[submodule "NuRaft"]
+	path = NuRaft
+	url = https://github.com/eBay/NuRaft
