@@ -2,7 +2,11 @@
 #include <string>
 //#include "network.hpp"
 #include "compute_check.hpp"
+#include "global.hpp"
+
 using namespace std;
+
+
 
 enum Command {
     HELP,
@@ -29,7 +33,7 @@ Command getCommand(const string& cmd) {
 }
 
 int main() {
-    double result;
+    metric=metric_calculation();
     string input;
     string networkName;
     string password;
@@ -38,8 +42,8 @@ int main() {
     bool running = true;
 
     //NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
-    result=metric_calculation();
-    cout << result;
+
+    cout << metric;
     cout << "=============================\n";
     cout << "     HiveMind CLI System\n";
     cout << "=============================\n";

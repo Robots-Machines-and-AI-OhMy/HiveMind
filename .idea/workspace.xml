@@ -33,10 +33,9 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="75218612-5dce-486d-ab52-7bcc040b416e" name="Changes" comment="test">
-      <change afterPath="$PROJECT_DIR$/.idea/.name" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/realMindMesh.iml" afterDir="false" />
+    <list default="true" id="75218612-5dce-486d-ab52-7bcc040b416e" name="Changes" comment="test compute_check">
+      <change afterPath="$PROJECT_DIR$/global.cpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/global.hpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/CMakeLists.txt" beforeDir="false" afterPath="$PROJECT_DIR$/CMakeLists.txt" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HiveMindCLI.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/HiveMindCLI.cpp" afterDir="false" />
@@ -167,7 +166,7 @@
       <workItem from="1777664486239" duration="194000" />
       <workItem from="1777664770915" duration="7800000" />
       <workItem from="1777684817603" duration="2682000" />
-      <workItem from="1777771300027" duration="2972000" />
+      <workItem from="1777771300027" duration="5859000" />
     </task>
     <task id="LOCAL-00001" summary="test">
       <option name="closed" value="true" />
@@ -217,7 +216,15 @@
       <option name="project" value="LOCAL" />
       <updated>1777667063493</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="test compute_check">
+      <option name="closed" value="true" />
+      <created>1777853607378</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1777853607378</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -230,6 +237,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="test" />
-    <option name="LAST_COMMIT_MESSAGE" value="test" />
+    <MESSAGE value="test compute_check" />
+    <option name="LAST_COMMIT_MESSAGE" value="test compute_check" />
   </component>
 </project>

@@ -136,7 +136,7 @@ endforeach()
 add_executable(MindMesh
         compute_check.cpp
         matrix_funcs.cpp
-
+        global.cpp
         HiveMindCLI.cpp
         #network.cpp
 )
