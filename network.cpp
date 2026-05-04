@@ -3,6 +3,7 @@
  */
 
 #include "msquic\src\inc\msquic.hpp" //QUIC library
+#include "tiny-sha\src\tiny_sha.h" //SHA library
 #include <iostream>
 #include <string>
 #include <vector> // basically array lists
@@ -221,18 +222,29 @@ public:
 */
 
 // network constructor, password may be NULL
-NetworkManager::Network::Network(string netName, string leader, string passHash) {
+NetworkManager::Network::Network(string netName, string leader, string password) {
     name = netName;
-	//UID init
-    password = passHash;
+	long long currentTime = std::chrono::time_point_cast<std::chrono::nanoseconds>(
+            std::chrono::high_resolution_clock::now()
+        ).time_since_epoch().count();
+	if (!(SHA256((const uint8_t*)currentTime, sizeof(currentTime), &netUID)))
+		cout << "Hash of current time (for UID) failed" << endl;
+	
+    if (password == "")
+		passValid = false;
+	else {
+		if (!(SHA256((const uint8_t*)(c_str(password)), password.length, &passHash)))
+			cout << "Hash of new network's password failed!" << endl; 
+		passValid = true; 
+	}
     leadIP = leader;
 }
 
 string NetworkManager::Network::getName() { return name; }
-//string NetworkManager::Network::getUID() { return UID; }
+uint8_t* NetworkManager::Network::getUID() { return &UID; }
 string NetworkManager::Network::getLeader() { return leadIP; }
 bool NetworkManager::Network::isPass() {
-	if (password == "")
+	if (!passValid)
 		return false;
 	else
 		return true;
@@ -240,26 +252,22 @@ bool NetworkManager::Network::isPass() {
 
 // accepts a password hash and compares it to this network
 // returns true if the hashes match
-bool NetworkManager::Network::validatePassword(string inputPassHash) {
-        if (password == inputPassHash)
-            return true;
-        else
-            return false;
+bool NetworkManager::Network::validatePassword(uint8_t* inputPassHash) {
+	int cmp = SHA256CompareOrder(inputPassHash, passHash);
+	if (cmp == 0)
+		return true; 
+	else 
+		return false;
 }
 
 // constructor, specifies testing mode
-NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
+NetworkManager::NetworkManager(bool testing) : currentNet("", "", "") {
     perfScore = calculateMetrics();
     test = testing;
 
     nodeState = NONE;
     hostname = gethostbyname("");
 	localIP = inet_ntoa(*(struct in_addr *)*localHost->h_addr_list); // get this device's IP
-    //currentNet = new this->Network::Network("null", "none", "na"); //random inapplicable values
-
-	/*vector<P2PNetInfo> networks;
-
-	networks = vector<P2PNetInfo>();*/
     netInfo = new vector<struct P2PNetInfo>();
     halting = false;
 
@@ -270,7 +278,13 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
         wprintf(L"Issue with WS startup: %d\n", WSAGetLastError());
         exit(0);
     }
-    //Lsquic startup here
+	//startup msquic
+	QUIC_STATUS quicStatus = MsQuicOpen2(); //use msquic version 2
+	if (quicStatus == QUIC_FAILED) {
+		cout << "msquic failed to start" << endl;
+		exit(0);
+	}
+	
 }
 
 // internal async method, ran by leaders
@@ -350,6 +364,8 @@ void NetworkManager::sendHeartbeat() {
     }
 }
 
+
+
 // launches threads for async member methods
 // does not set node state
 // CANDIDATE state only exists when the async methods are functioning
@@ -390,7 +406,6 @@ bool NetworkManager::leaveNetwork() {
 
         //wipe network
     	currentNet.setName("");
-    	currentNet.setUID(""); // generate UID
     	currentNet.setPassword("");
         return true;
     }
@@ -505,6 +520,7 @@ void NetworkManager::cleanup() {
 
     // cleanup networks
     int success = WSACleanup();
+	MsQuicClose();
 
     if (test) {
         // print captured issues to terminal
