@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
-#include "network.hpp"
+//#include "network.hpp"
+#include "compute_check.hpp"
 using namespace std;
 
 enum Command {
@@ -28,6 +29,7 @@ Command getCommand(const string& cmd) {
 }
 
 int main() {
+    double result;
     string input;
     string networkName;
     string password;
@@ -35,8 +37,9 @@ int main() {
     bool isConnected = false;
     bool running = true;
 
-    NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
-
+    //NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
+    result=metric_calculation();
+    cout << result;
     cout << "=============================\n";
     cout << "     HiveMind CLI System\n";
     cout << "=============================\n";
@@ -67,7 +70,7 @@ int main() {
                 cout << "Enter the password for your network: ";
                 cin >> password;
 
-                NetManager->createNetwork(networkName, password);
+                //NetManager->createNetwork(networkName, password);
                 break;
 
             case SCAN:
