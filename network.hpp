@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map> //hashmap
 #include <mutex>
 #include <winsock2.h>
 
@@ -47,15 +48,14 @@ private:
     bool test; //testing mode
 
     status nodeState; //current state, see enum above
-    struct SystemHealth dynPerfScore; //performance score
+    struct SystemHealth dynPerfScore; // device's performance score
     hostent* hostname; //the device's hostname
 	char* localIP; //the device's IP address
 
     Network currentNet; //current network device is member of, may be null
     const int tickTime = 200; //heartbeat timing interval in ms
     const int heartbeatTimeout = 500; //timeout for getting heartbeat in ms
-	vector<struct SystemHealth> memberScores; //track member's performance scores
-
+	
     // holds NetInfo structs, used for reporting scan results to UI
     vector<struct P2PNetInfo> netInfo;
 
@@ -65,6 +65,12 @@ private:
     NetworkManager* netmgr; // pointer to singleton obj
     static mutex mtx; // lock object
     NetworkManager(bool testing);
+	
+	struct Peer {
+		struct SystemHealth dynamicScore;
+		double staticScore;
+	}
+	unordered_map<string, struct Peer> peerTable; 
 	
 	vector<thread> asyncOps; //track launched threads
     void listenForScan(); //async leader method, responds to scan msgs

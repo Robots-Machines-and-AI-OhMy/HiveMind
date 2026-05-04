@@ -11,7 +11,9 @@
 #include <winsock2.h> // networking package
 #include <thread> // for async operations
 #include <mutex> // locking mechanisms
+#include <unordered_map> // hashmaps
 
+#include "global.hpp"
 #include "network.hpp"
 #include "containerization.hpp" // handles process containerization logic
 #include "Calculate_Performance.hpp" //dynamic performance metric calculation
