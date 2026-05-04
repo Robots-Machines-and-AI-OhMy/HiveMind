@@ -2,7 +2,7 @@
  * handles networking functions
  */
 
-//#include <Lsquic.h> // Litespeed Quic library
+#include "msquic\src\inc\msquic.hpp" //QUIC library
 #include <iostream>
 #include <string>
 #include <vector> // basically array lists
@@ -272,7 +272,7 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
 
 // internal async method, ran by leaders
 // listens for UDP messages on port 56713; responds with their network info
-// format:  <network-name>|<network-UID>|<passFlag>
+// format:  <network-name>|<network-UID>|<leader-ip>|<passFlag>
 // passFlag is either "t" or "f"
 // pipe "|" is used as delimiter
 void NetworkManager::listenForScan() {
