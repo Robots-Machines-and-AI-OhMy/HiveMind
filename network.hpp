@@ -35,7 +35,7 @@ private:
         string getUID();
         string getLeader();
         bool isPass();
-		
+
 		void setName(string newName);
 		void setUID(string newUID);
 		void setPassword(string newHash);
@@ -71,7 +71,7 @@ private:
 public:
 
     // structure for network info, to be exposed to UI
-    struct NetInfo {
+    struct P2PNetInfo {
         string name;
         string UID;
         string leadIP;

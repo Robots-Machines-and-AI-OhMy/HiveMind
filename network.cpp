@@ -64,8 +64,8 @@ private:
     const int tickTime = 200; // time between heartbeats (in ms)
     const int heartbeatTimeout = 500; //time in ms to wait for heartbeat
 
-    // holds NetInfo structs, used for reporting scan results to UI
-    vector<struct NetInfo> netInfo = new vector<struct NetInfo>();
+    // holds P2PNetInfo structs, used for reporting scan results to UI
+    vector<struct P2PNetInfo> netInfo = new vector<struct P2PNetInfo>();
 
     WSADATA wsdata;
 
@@ -119,7 +119,7 @@ private:
 public:
 
     // structure for network info, to be exposed to UI
-    struct NetInfo {
+    struct P2PNetInfo {
         string name;
         string UID;
         string leadIP;
@@ -215,7 +215,7 @@ public:
         return netmgr;
     }
 
-    vector<struct NetInfo> getNetworkInfo() { return netInfo; }
+    vector<struct P2PNetInfo> getNetworkInfo() { return netInfo; }
 
 };
 */
@@ -233,7 +233,7 @@ string NetworkManager::Network::getName() { return name; }
 string NetworkManager::Network::getLeader() { return leadIP; }
 bool NetworkManager::Network::isPass() {
 	if (password == "")
-		return false; 
+		return false;
 	else
 		return true;
 }
@@ -253,14 +253,14 @@ NetworkManager::NetworkManager(bool testing) : currentNet("null", "none", "na"){
     test = testing;
 
     nodeState = NONE;
-    hostname = gethostbyname(""); 
+    hostname = gethostbyname("");
 	localIP = inet_ntoa(*(struct in_addr *)*localHost->h_addr_list); // get this device's IP
     //currentNet = new this->Network::Network("null", "none", "na"); //random inapplicable values
 
-	/*vector<NetInfo> networks;
+	/*vector<P2PNetInfo> networks;
 
-	networks = vector<NetInfo>();*/
-    netInfo = new vector<struct NetInfo>();
+	networks = vector<P2PNetInfo>();*/
+    netInfo = new vector<struct P2PNetInfo>();
     halting = false;
 
     NetworkManager(const NetworkManager& obj) = delete; //delete copy constructor
@@ -290,16 +290,16 @@ void NetworkManager::listenForScan() {
     listenSpec.sin_family = AF_INET;
     listenSpec.sin_addr.s_addr = INADDR_ANY; //accept any IP
     listenSpec.sin_port = htons(56713); //listen on port 56713
-	
+
 	int reqbuflen = 32; // length of recv buffer
 	char reqbuf[reqbuflen]; // holds request message
 	sockaddr requestAddr; // holds request source address
 	int recvResult; // observing how successful receive is
-	
+
 	int sendResult; // observing how successful send operation is
 	int sendbuflen = 128; // length of send buffer
 	char sendbuf[sendbuflen]; // holds message to send
-	
+
 	//network info format: <network-name>|<network-UID>|<leader-IP>|<passFlag>
 	//network-name: name of the network
 	//network-UID: UID of the network
@@ -310,9 +310,9 @@ void NetworkManager::listenForScan() {
 		networkInfo += "t";
 	else
 		networkInfo += "f";
-	
+
 	strcpy(sendbuf, networkInfo.c_str());
-	
+
 	int bindCode = bind(scanListener, (struct sockaddr*)&listenSpec, sizeof(listenSpec));
 
 	if (bindCode == SOCKET_ERROR) {
@@ -322,14 +322,14 @@ void NetworkManager::listenForScan() {
 
     while (!halting && nodeState == LEADER) {
         // thread will spin around in here, perform one response per iteration
-		
+
 		// receive packet (broadcast from scan function)
 		// note: recvfrom is a blocking method
 		recvResult = recvfrom(scanListener, reqbuf&, reqbuflen, 0, requestAddr&, sizeof(requestAddr));
-		
-		// send response 
-		sendResult = sendto(scanListener, sendbuf&, sendbuflen, 0, requestAddr&, sizeof(requestAddr)); 
-		
+
+		// send response
+		sendResult = sendto(scanListener, sendbuf&, sendbuflen, 0, requestAddr&, sizeof(requestAddr));
+
     }
     // close UDP socket
     closesocket(scanListener);
@@ -357,7 +357,7 @@ void NetworkManager::memberInit() {
 	switch (nodeState) {
 		case LEADER:
 			// launch scan listener
-		case FOLLOWER: 
+		case FOLLOWER:
 			// launch heartbeat
 		default:
 			// does nothing
@@ -373,7 +373,7 @@ bool NetworkManager::createNetwork(string name, string passHash) {
     currentNet.setName(name);
 	currentNet.setUID(); // generate UID
 	currentNet.setPassword(passHash);
-	
+
 	nodeState = LEADER; // creating node is the leader of network by default
 	memberInit(); // initialize async methods
 
@@ -410,7 +410,7 @@ bool NetworkManager::joinNetwork(string name, string UID, string passHash) {
 void NetworkManager::scan() {
     // initialize UDP socket
 	SOCKET scanner = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	
+
 	if (scanner == INVALID_SOCKET) {
 		wprintf(L"socket failed with error: %ld\n", WSAGetLastError());
 		WSACleanup();
@@ -419,7 +419,7 @@ void NetworkManager::scan() {
     // specify socket
 	BOOL bOpt = TRUE;
 	int bOptLen = sizeof (BOOL);
-	
+
 	// set socket to broadcast
 	int broadcastSetCode = setsockopt(scanner, SOL_SOCKET, SO_BROADCAST, (char*) &bOpt, bOptLen);
 	if (broadcastSetCode != 0) {
@@ -427,9 +427,9 @@ void NetworkManager::scan() {
 		WSACleanup();
 		exit(0);
 	}
-	
+
 	// send broadcast message
-	struct sockaddr_in scanSpec; 
+	struct sockaddr_in scanSpec;
 	scanSpec.sin_family = AF_INET;
 	scanSpec.sin_port = htons(56713);
 	scanSpec.sin_addr.s_addr = inet_addr("255.255.255.255"); // broadcast address
@@ -437,22 +437,22 @@ void NetworkManager::scan() {
 	if (sendResult == SOCKET_ERROR) {
 		wprintf(L"send error: %d\n", WSAGetLastError());
 	}
-	
-	int recBufLen = 128; 
+
+	int recBufLen = 128;
 	char* recBuf[recBufLen];
-	
+
 	this_thread::sleep_for(chrono::seconds(1));  ; //brief pause to get network responses
 
 
     // collect responses, populate netInfo vector
 	int bytesReceived;
-	struct NetInfo receivedNet;
+	struct P2PNetInfo receivedNet;
 	// this loop technically cannot break since recv is blocking
 	// implement timing mechanism here to force the loop to exit after specified time
 	int maxTimeMS = 2000; // time to pick up networks
-	netInfo = new vector<struct NetInfo>(); // wipe old network list; avoids stale data
+	netInfo = new vector<struct P2PNetInfo>(); // wipe old network list; avoids stale data
 	while ((bytesReceived = recv(scanner, recBuf, recBufLen, 0)) != 0) {
-		netInfo.push_back(new struct NetInfo);
+		netInfo.push_back(new struct P2PNetInfo);
 		//initialize
 		receivedNet = netInfo.get(netInfo.length - 1);
 		receivedNet.name = "";
@@ -479,7 +479,7 @@ void NetworkManager::scan() {
 			receivedNet.passFlag = true;
 		else
 			receivedNet.passFlag = false;
-		
+
 		// check time; make sure maxTimeMS has not fully elapsed
 	}
 
@@ -528,4 +528,4 @@ static NetworkManager* NetworkManager::getNetworkManager(bool testing) {
     return netmgr;
 }
 
-vector<struct NetInfo> NetworkManager::getNetworkInfo() { return netInfo; }
+vector<struct P2PNetInfo> NetworkManager::getNetworkInfo() { return netInfo; }
