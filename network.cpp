@@ -14,212 +14,9 @@
 
 #include "network.hpp"
 #include "containerization.hpp" // handles process containerization logic
+#include "Calculate_Performance.hpp" //dynamic performance metric calculation
 
 using namespace std;
-
-/*
-class NetworkManager {
-
-private:
-    class Network {
-
-    private:
-        string name; //name of network
-        string netUID; //UID of network
-        string leadIP; //leader's IP address
-        string password; //hash of password, may be null
-
-    public:
-        // network constructor, password may be NULL
-        Network(string netName, string leader, string pass) {
-            name = netName;
-            password = pass;
-            leadIP = leader;
-        }
-
-        string getName() { return name; }
-        string getUID() { return netUID; }
-        string getLeader() { return leadIP; }
-        // password cannot get directly retrieved, for security reasons
-
-        // accepts a password hash and compares it to this network
-        // returns true if the hashes match
-        bool validatePassword(string inputPassHash) {
-            if (password == inputPassHash)
-                return true;
-            else
-                return false;
-        }
-    }; // end Network class
-
-    // NetworkManager attributes
-
-    const bool test; // for testing mode
-
-    status nodeState = None;
-    double perfScore; // this device's performance score
-    char* hostname = (char*)malloc(256 * sizeof(char));
-    winsock2::gethostname(hostname, 256);
-
-    Network currentNet = NULL; // this device's current network
-    const int tickTime = 200; // time between heartbeats (in ms)
-    const int heartbeatTimeout = 500; //time in ms to wait for heartbeat
-
-    // holds P2PNetInfo structs, used for reporting scan results to UI
-    vector<struct P2PNetInfo> netInfo = new vector<struct P2PNetInfo>();
-
-    WSADATA wsdata;
-
-    // stops async operations
-    // set when leaving network, reset when joining
-    bool halting = false;
-
-    NetworkManager* netmgr;
-    static mutex mtx; // lock object
-
-    // constructor, specifies testing mode
-    NetworkManager(bool testing) {
-        perfScore = calculateMetrics();
-        test = testing;
-        //startup winsock, this is mandatory so kill if error
-        if (WSAStartup(MAKEWORD(2,2), &wsdata) != 0) {
-            printf("Issue with WS startup: %d\n", WSAGetLastError());
-            exit(0);
-        }
-        //Lsquic startup here
-    }
-
-    // internal async method, ran by leaders
-    void listenForScan() {
-        // IPv4 UDP socket
-        SOCKET scanListener = new socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        struct sockaddr_in listenSpec;
-        listenSpec.sin_family = AF_INET;
-        listenSpec.sin_addr.s_addr = INADDR_ANY;
-        listenSpec.sin_port = htons(56713);
-
-        while (!halting && nodeState == LEADER) {
-            // wait here
-        }
-        // close UDP socket
-        closesocket(scanListener);
-    }
-
-    // internal async method
-    void sendHeartbeat() {
-        while (!halting) {
-            if (nodeState == LEADER) {
-                //send heartbeat logic
-            }
-            else {
-                //send metrics to leader
-            }
-        }
-    }
-
-public:
-
-    // structure for network info, to be exposed to UI
-    struct P2PNetInfo {
-        string name;
-        string UID;
-        string leadIP;
-        bool password;
-    };
-
-    NetworkManager(const NetworkManager& obj) = delete; //delete copy constructor
-
-    // creates a network with specified name and password
-    // password may be null
-    // returns true if network successfully created
-    bool createNetwork(string name, string password) {
-        currentNet = Network(name, hostname, password);
-
-        //perform rest of setup logic here
-
-        return true; //success
-    }
-
-    // disconnects this device from network
-    // returns true when complete
-    // returns false if an error was encountered
-    bool leaveNetwork() {
-        try {
-            //perform disconnection logic
-            halting = true;
-
-            //wipe network
-            Network currentNet = NULL;
-            return true;
-        }
-        catch (Exception e) {
-            return false;
-        }
-    }
-
-    // attempts to join network of specified name and password
-    // password may be null
-    // returns true if success, false if there was an error
-    bool joinNetwork(string name, string UID, string password) {
-        return false; //replace with join logic later
-    }
-
-    //scans for networks by broadcasting UDP port 56713
-    void scan() {
-        // initialize UDP socket(s)
-
-        // send broadcast message
-
-        // collect responses, populate netInfo vector
-
-    }
-
-    // runs metric calculation algorithm
-    double calculateMetrics() {
-        return -1.0; //replace with algorithm
-    }
-
-    // fully dismantles network operations for proper shutdown
-    // intended to be called when application terminating
-    void cleanup() {
-        // disconnect from current net if applicable
-        bool discSuccess = false;
-        if (currentNet != NULL) {
-            discSuccess = leaveNetwork();
-        }
-        else {
-            discSuccess = true;
-        }
-
-        // cleanup networks
-        int success = winsock2::WSACleanup();
-
-        if (test) {
-            // print captured issues to terminal
-            if (!discSuccess)
-                cout << "issues encountered disconnecting from network" << endl;
-            if (success != 0)
-                cout << "issues encountered cleaning up winsock.dll" << endl;
-        }
-    }
-
-    // used to initialize NetworkManager as a singleton
-    // testing parameter used to put the network manager in testing mode
-    // after initialization this cannot be changed.
-    static NetworkManager* getNetworkManager(bool testing) {
-        if (netmgr == nullptr) {
-            lock_guard<mutex> lock(mtx);
-            if (netmgr == nullptr) {
-                netmgr = new NetworkManager(testing);
-            }
-        }
-        return netmgr;
-    }
-
-    vector<struct P2PNetInfo> getNetworkInfo() { return netInfo; }
-
-};
-*/
 
 // network constructor, password may be NULL
 NetworkManager::Network::Network(string netName, string leader, string password) {
@@ -241,8 +38,29 @@ NetworkManager::Network::Network(string netName, string leader, string password)
 }
 
 string NetworkManager::Network::getName() { return name; }
-uint8_t* NetworkManager::Network::getUID() { return &UID; }
+uint8_t NetworkManager::Network::getUID() { return UID; }
 string NetworkManager::Network::getLeader() { return leadIP; }
+
+void NetworkManager::Network::setName(string newName) { name = newName; }
+void NetworkManager::Network::setLeader(string leader) { leadIP = leader; }
+void NetworkManager::Network::setUID() {
+	long long currentTime = std::chrono::time_point_cast<std::chrono::nanoseconds>(
+            std::chrono::high_resolution_clock::now()
+        ).time_since_epoch().count();
+	if (!(SHA256((const uint8_t*)currentTime, sizeof(currentTime), &netUID)))
+		cout << "Hash of current time (for UID) failed" << endl;
+}
+void NetworkManager::Network::setPassword(string newPassword) {
+	if (password == "")
+		passValid = false;
+	else {
+		if (!(SHA256((const uint8_t*)(c_str(password)), password.length, &passHash)))
+			cout << "Hash of new network's password failed!" << endl; 
+		passValid = true; 
+	}
+}
+
+
 bool NetworkManager::Network::isPass() {
 	if (!passValid)
 		return false;
@@ -262,7 +80,7 @@ bool NetworkManager::Network::validatePassword(uint8_t* inputPassHash) {
 
 // constructor, specifies testing mode
 NetworkManager::NetworkManager(bool testing) : currentNet("", "", "") {
-    perfScore = calculateMetrics();
+	
     test = testing;
 
     nodeState = NONE;
@@ -364,8 +182,6 @@ void NetworkManager::sendHeartbeat() {
     }
 }
 
-
-
 // launches threads for async member methods
 // does not set node state
 // CANDIDATE state only exists when the async methods are functioning
@@ -373,8 +189,12 @@ void NetworkManager::memberInit() {
 	switch (nodeState) {
 		case LEADER:
 			// launch scan listener
+			thread scan(listenForScan);
+			asyncOps.push_back(scan);
 		case FOLLOWER:
 			// launch heartbeat
+			thread beatSend(sendHeartbeat);
+			asyncOps.push_back(beatSend);
 		default:
 			// does nothing
 			break;
@@ -385,11 +205,11 @@ void NetworkManager::memberInit() {
 // creates a network with specified name and password
 // password may be null
 // returns true if network successfully created
-bool NetworkManager::createNetwork(string name, string passHash) {
-    currentNet.setName(name);
-	currentNet.setUID(); // generate UID
-	currentNet.setPassword(passHash);
-
+bool NetworkManager::createNetwork(string name, string password) {
+	
+	currentNet.setName(name);
+	currentNet.setUID();
+	currentNet.setPassword(password);
 	nodeState = LEADER; // creating node is the leader of network by default
 	memberInit(); // initialize async methods
 
@@ -417,7 +237,7 @@ bool NetworkManager::leaveNetwork() {
 // attempts to join network of specified name and password
 // password may be null
 // returns true if success, false if there was an error
-bool NetworkManager::joinNetwork(string name, string UID, string passHash) {
+bool NetworkManager::joinNetwork(string name, string UID, string password) {
     return false; //replace with join logic later
 }
 
@@ -502,8 +322,8 @@ void NetworkManager::scan() {
 
 // runs dynamic metric calculation algorithm
 // metrics sent to leader during heartbeat
-double NetworkManager::calculateMetrics() {
-    return -1.0; //replace with algorithm
+struct SystemHealth NetworkManager::calculateMetrics() {
+    return getSystemHealth();
 }
 
 // fully dismantles network operations for proper shutdown

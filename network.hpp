@@ -38,8 +38,8 @@ private:
         bool isPass();
 
 		void setName(string newName);
-		void setUID(string newUID);
-		void setPassword(string newHash);
+		void setUID(); //generates new UID
+		void setPassword(string newPassword); //hashes argument for password set
 
         bool validatePassword(string inputPassHash);
     };
@@ -47,13 +47,14 @@ private:
     bool test; //testing mode
 
     status nodeState; //current state, see enum above
-    double perfScore; //performance score
+    struct SystemHealth dynPerfScore; //performance score
     hostent* hostname; //the device's hostname
 	char* localIP; //the device's IP address
 
     Network currentNet; //current network device is member of, may be null
     const int tickTime = 200; //heartbeat timing interval in ms
     const int heartbeatTimeout = 500; //timeout for getting heartbeat in ms
+	vector<struct SystemHealth> memberScores; //track member's performance scores
 
     // holds NetInfo structs, used for reporting scan results to UI
     vector<struct P2PNetInfo> netInfo;
