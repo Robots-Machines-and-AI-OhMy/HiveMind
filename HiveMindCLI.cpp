@@ -54,7 +54,7 @@ int main() {
         switch (getCommand(input)) {
 
             case HELP:
-                cout << "\nAvailable Commands:\n";
+                cout << "Available Commands:\n";
                 cout << "create      - Create a HiveMind network\n";
                 cout << "scan        - Search for HiveMind networks\n";
                 cout << "join        - Join a network\n";
@@ -65,18 +65,18 @@ int main() {
                 break;
 
             case CREATE:
-                cout << "\nCreate your network\n";
+                cout << "Create your network\n";
                 cout << "Enter the name of your network: ";
                 cin >> networkName;
 
-                cout << "Enter the password for your network: ";
+                cout << "Enter the password for your network or NA for no password: ";
                 cin >> password;
 
-                //NetManager->createNetwork(networkName, password);
+                //if (password == "NA") NetManager->createNetwork(networkName, ""); else NetManager->createNetwork(networkName, password);
                 break;
 
             case SCAN:
-                cout << "\nScanning local network...\n";
+                cout << "Scanning local network...\n";
                 cout << "Found networks:\n";
 
                 // Later you can replace this with NetManager->getNetworkInfo()
@@ -101,7 +101,7 @@ int main() {
 
             case STATUS:
                 if (isConnected) {
-                    cout << "\nNetwork Status:\n";
+                    cout << "Network Status:\n";
                     cout << "Connected: Yes\n";
                     cout << "Node Role: Follower\n";
                     cout << "CPU Usage: 34%\n";
@@ -141,6 +141,6 @@ int main() {
                 break;
         }
     }
-
+    cout << "Closed";
     return 0;
 }

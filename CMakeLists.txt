@@ -45,8 +45,13 @@ target_link_libraries(hook PRIVATE kernel32 psapi)
 # ============================================================
 # offload_hook.dll
 # Loader: wires AskEngine + TransferEngine stubs into hook.dll.
+#
+# Demo mode: Offload_Hook.cpp only, kernel32 only.
+# LINK: when leader-follower is working, replace with:
+#   add_library(offload_hook SHARED Offload_Hook.cpp transfer_engine.cpp)
+#   target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 psapi)
 # ============================================================
-add_library(offload_hook SHARED offload_hook.cpp)
+add_library(offload_hook SHARED Offload_Hook.cpp)
 target_link_libraries(offload_hook PRIVATE kernel32)
 
 # ============================================================
@@ -66,9 +71,6 @@ target_link_libraries(install_hook PRIVATE advapi32)
 # — before hook.dll itself has finished compiling and linking.
 add_dependencies(install_hook hook offload_hook)
 
-# Embed a UAC manifest requesting Administrator elevation.
-# This triggers the UAC prompt when the exe is launched from
-# CLion, Explorer, or the command line.
 # UAC elevation via side-by-side manifest file.
 # The manifest is embedded into install_hook.exe at link time by mt.exe.
 # This avoids the LINK_FLAGS quoting issue that breaks Ninja + MSVC.
@@ -114,6 +116,18 @@ target_link_libraries(test_runner PRIVATE kernel32)
 add_dependencies(test_runner hook offload_hook)
 
 # ============================================================
+# remote_agent.exe
+# Runs on target nodes; receives process bundles and executes them.
+# Build this separately and deploy to every machine that will
+# receive offloaded processes.
+# Links ws2_32 for Winsock (TCP stub; replace with lsQUIC later).
+# ============================================================
+# remote_agent.exe — deploy to target nodes to receive offloaded processes.
+# Uncomment when remote_agent.cpp is added to the project.
+# add_executable(remote_agent remote_agent.cpp)
+# target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
+
+# ============================================================
 # POST-BUILD: copy DLLs next to each executable
 #
 # The C:\Tools copy is intentionally omitted here. hook.dll may
@@ -149,7 +163,7 @@ add_executable(MindMesh
         matrix_funcs.cpp
         global.cpp
         HiveMindCLI.cpp
-        network.cpp
+        #network.cpp
 )
 
 add_executable(matrix_tests

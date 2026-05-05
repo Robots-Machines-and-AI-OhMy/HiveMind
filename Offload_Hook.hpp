@@ -1,18 +1,19 @@
 /*
- * offload_hook.hpp
+ * Offload_Hook.hpp
  * --------------------------------------------------------------
  * Public C++ interface for offload_hook.dll.
- * (Renamed from injector.hpp — same role, clearer name.)
  *
  * Exposes:
- *   Inject()  — load hook.dll, wire in engine stubs, activate.
- *   Eject()   — teardown hook.dll and unload.
+ *   Inject()           — load hook.dll, wire in engines, activate.
+ *   Eject()            — teardown hook.dll and unload.
+ *   OffloadFilterAdd() — add a basename to the permanent skip list.
  *
- * Engine linkage points are marked with LINK comments.
- * Replace stubs in offload_hook.cpp when engines are ready.
- *
- * Also re-exports FnHookFilterAddName so callers can add names
- * to hook.dll's runtime filter without including hook.h directly.
+ * Engine linkage:
+ *   TransferEngine — implemented in transfer_engine.cpp.
+ *                    Wired automatically in Inject().
+ *   AskEngine      — stub until leader comms layer is ready.
+ *                    LINK comment in Offload_Hook.cpp marks the
+ *                    replacement point.
  * --------------------------------------------------------------
  */
 
@@ -23,21 +24,32 @@
                        DECISION_TIMEOUT_MS, HOOK_QUEUE_CAPACITY,
                        FnHookFilterAddName                          */
 
+/* LINK: uncomment these when leader-follower is working:
+ * #include "transfer_engine.hpp"  // TransferEngineImpl()
+ * #include "leader_protocol.hpp"  // CapabilityRequest, OffloadResponse */
+
 /* ============================================================
  *  ENGINE LINKAGE DECLARATIONS
  *
- *  When AskEngine and TransferEngine are implemented:
- *    1. Include their headers here.
- *    2. At the LINK comments in offload_hook.cpp, replace the
- *       stub function pointers with the real ones.
+ *  TransferEngine: stubbed NULL for demo — leader-follower not
+ *                   ready yet.  Files transfer_engine.cpp/.hpp
+ *                   and leader_protocol.hpp are complete and
+ *                   waiting. To re-enable:
+ *                     1. Uncomment the includes above.
+ *                     2. Change NULL -> TransferEngineImpl in
+ *                        Offload_Hook.cpp Inject().
+ *                     3. Add transfer_engine.cpp to the
+ *                        offload_hook CMake target.
  *
- *  Example:
- *    #include "ask_engine.h"       // AskEngineImpl()
- *    #include "transfer_engine.h"  // TransferEngineImpl()
+ *  AskEngine: pending teammate's leader comms layer.
+ *    When ready:
+ *      1. Include the ask engine header here.
+ *      2. Replace AskEngine stub in Offload_Hook.cpp Inject()
+ *         with the real function pointer.
+ *    Wire format is defined in leader_protocol.hpp.
  * ============================================================ */
 
-/* LINK AskEngine header here      */
-/* LINK TransferEngine header here */
+/* LINK AskEngine header here when ready */
 
 /* ============================================================
  *  PUBLIC API
@@ -45,39 +57,8 @@
 
 extern "C" {
 
-/*
- * Inject()
- *
- * Loads hook.dll, resolves HookInit, passes engine stubs.
- * Until real engines are linked:
- *   - Every non-OS process is caught and queued.
- *   - AskEngine stub does not signal — timeout fires at 200 ms.
- *   - Process runs locally after timeout.
- *   - All activity is logged to C:\Temp\hook.log.
- *
- * Returns TRUE if hook.dll loaded and HookInit was called.
- */
 __declspec(dllexport) BOOL WINAPI Inject(void);
-
-/*
- * Eject()
- *
- * Clears engines in hook.dll, then unloads it.
- * After this call every intercepted launch passes through
- * immediately (NULL engine guard -> local_run).
- */
 __declspec(dllexport) void WINAPI Eject(void);
-
-/*
- * OffloadFilterAdd()
- *
- * Thin wrapper around hook.dll's hook_filter_add_name().
- * Adds a process basename to the permanent local-only list.
- * Call when the leader determines a binary is never offloadable.
- *
- * name — basename only, e.g. L"myapp.exe"
- * Returns TRUE on success.
- */
 __declspec(dllexport) BOOL WINAPI OffloadFilterAdd(LPCWSTR name);
 
 } /* extern "C" */

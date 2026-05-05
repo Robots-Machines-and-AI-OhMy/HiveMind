@@ -20,6 +20,7 @@ if "%PROJECT:~-1%"=="\" set "PROJECT=%PROJECT:~0,-1%"
 
 set "BUILD=%PROJECT%\cmake-build-debug"
 set "CMAKE_EXE=C:\Program Files\JetBrains\CLion 2025.2.1\bin\cmake\win\x64\bin\cmake.exe"
+set "NINJA_EXE=C:\Program Files\JetBrains\CLion 2025.2.1\bin\ninja\win\x64\ninja.exe"
 set "TOOLS=C:\Tools"
 set "LOG=C:\Temp\hook.log"
 
@@ -44,7 +45,6 @@ if not defined VCVARS (
 if not exist "!VCVARS!" (
     echo [ERROR] vcvars64.bat not found at:
     echo         !VCVARS!
-    echo         Check the path is correct and the file exists.
     pause & exit /b 1
 )
 echo [ok] MSVC toolchain : !VCVARS!
@@ -58,88 +58,92 @@ if not exist "%TOOLS%"  mkdir "%TOOLS%"
 if not exist "C:\Temp"  mkdir "C:\Temp"
 echo [ok] Directories ready.
 
-:: ── Uninstall old hook BEFORE building ───────────────────────
-:: Clears AppInit_DLLs so cmake/ninja launch without the stale
-:: dll during compilation. Re-registered after the fresh copy.
+:: ── STEP 1: Uninstall BEFORE wiping build dir ────────────────
+:: install_hook.exe lives in the build dir. Uninstall must run
+:: FIRST — before rmdir — otherwise the exe is gone and the
+:: registry keys stay set, leaving the old locked dll registered.
 echo.
-echo [install] Unregistering old hook.dll before rebuild...
+echo [install] Unregistering old hook.dll...
 if exist "%BUILD%\install_hook.exe" (
     "%BUILD%\install_hook.exe" uninstall >nul 2>&1
     echo [ok] Old hook unregistered.
 ) else (
-    echo [warn] install_hook.exe not found yet -- skipping uninstall.
+    echo [warn] install_hook.exe not found -- skipping uninstall.
+    echo        If hook.dll is registered it may still be locked.
 )
 
-:: ── Wipe stale build cache ───────────────────────────────────
-:: Required when CMakeLists.txt changes (e.g. new add_dependencies
-:: edges). Ninja caches the dependency graph; without a clean wipe
-:: it will not see the updated edges and skips building hook.dll /
-:: offload_hook.dll before the executables link.
+:: ── STEP 2: Wipe build cache AFTER uninstall ─────────────────
 echo.
 echo [build] Cleaning build directory...
-if exist "%BUILD%" (
-    rmdir /S /Q "%BUILD%"
-    echo [ok] Build directory wiped.
-) else (
-    echo [ok] Build directory did not exist -- skipping clean.
+if exist "%BUILD%" rmdir /S /Q "%BUILD%"
+:: Delete CMakeCache.txt directly in case rmdir left it behind
+:: (happens when CLion or antivirus holds a handle open).
+if exist "%BUILD%\CMakeCache.txt" del /F /Q "%BUILD%\CMakeCache.txt"
+if exist "%BUILD%\CMakeCache.txt" (
+    echo [ERROR] Cannot clear CMakeCache.txt.
+    echo         Close CLion completely then re-run this script.
+    pause & exit /b 1
 )
+echo [ok] Build directory cleaned.
 
-:: ── CMake configure ──────────────────────────────────────────
+:: ── STEP 3: Configure ────────────────────────────────────────
 echo.
 echo [build] Configuring...
 "%CMAKE_EXE%" -S "%PROJECT%" -B "%BUILD%" -G "Ninja" ^
     -DCMAKE_BUILD_TYPE=Debug ^
     -DCMAKE_C_COMPILER=cl ^
-    -DCMAKE_CXX_COMPILER=cl
+    -DCMAKE_CXX_COMPILER=cl ^
+    -DCMAKE_MAKE_PROGRAM="%NINJA_EXE%"
 if %errorlevel% neq 0 ( echo [ERROR] Configure failed. & pause & exit /b 1 )
 echo [ok] Configure done.
 
-:: ── Build ────────────────────────────────────────────────────
+:: ── STEP 4: Build ────────────────────────────────────────────
 echo.
 echo [build] Building...
 "%CMAKE_EXE%" --build "%BUILD%" --target hook offload_hook install_hook test_runner -j %NUMBER_OF_PROCESSORS%
 if %errorlevel% neq 0 ( echo [ERROR] Build failed. & pause & exit /b 1 )
 echo [ok] Build complete.
 
-:: ── Copy new hook.dll to stable path (retry loop) ────────────
-:: The old dll may still be mapped into processes that loaded it
-:: via AppInit_DLLs before the registry key was cleared. Clearing
-:: the key stops new loads but does not unmap already-loaded images.
-:: We simply retry every 2s until the copy succeeds -- as processes
-:: that hold the DLL exit naturally it will eventually release.
-:: There is no timeout: press Ctrl-C to abort if needed.
-
+:: ── STEP 5: Deploy hook.dll and install system-wide ──────────
+:: Each run gets a unique timestamped filename so a previously
+:: locked copy (still loaded by AppInit processes) never blocks
+:: the new deployment. Old files accumulate in C:\Tools but are
+:: harmless and can be cleaned up manually after a reboot.
 echo.
-echo [deploy] Copying new hook.dll to %TOOLS%...
-echo [deploy] Retrying every 2s until all holders release the file.
-echo [deploy] Press Ctrl-C to abort.
+echo [deploy] Deploying hook.dll to %TOOLS%...
 
-:copy_retry
-copy /Y "%BUILD%\hook.dll" "%TOOLS%\hook.dll" >nul 2>&1
-if %errorlevel% equ 0 goto :copy_ok
-echo [wait]  hook.dll still locked -- retrying in 2s...
-ping -n 3 127.0.0.1 >nul
-goto :copy_retry
+:: Build a unique name: hook_HHMMSS.dll
+for /f "tokens=1-3 delims=:." %%a in ("%TIME: =0%") do (
+    set "HOOK_TS=%%a%%b%%c"
+)
+set "HOOK_DEPLOY=%TOOLS%\hook_%HOOK_TS%.dll"
 
-:copy_ok
-echo [ok] hook.dll updated at %TOOLS%\hook.dll
+copy /Y "%BUILD%\hook.dll" "%HOOK_DEPLOY%" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Cannot write to %TOOLS%.
+    echo         Check permissions on %TOOLS%.
+    pause & exit /b 1
+)
+echo [ok] Deployed as %HOOK_DEPLOY%
 
-:: ── Install AppInit_DLLs ─────────────────────────────────────
+:: ── STEP 6: Install AppInit_DLLs ─────────────────────────────
 echo.
-echo [install] Registering hook.dll system-wide...
-"%BUILD%\install_hook.exe" install "%TOOLS%\hook.dll"
+echo [install] Registering %HOOK_DEPLOY% system-wide...
+"%BUILD%\install_hook.exe" install "%HOOK_DEPLOY%"
 if %errorlevel% neq 0 ( echo [ERROR] install_hook failed. & pause & exit /b 1 )
+
+
 
 echo.
 echo [install] Registry state:
 "%BUILD%\install_hook.exe" query
 
-:: ── Run test ─────────────────────────────────────────────────
+:: ── STEP 7: Run test ─────────────────────────────────────────
 echo.
 echo [test] Running test_runner.exe...
 "%BUILD%\test_runner.exe"
 
-:: ── Show log tail ─────────────────────────────────────────────
+:: ── STEP 8: Show log tail ─────────────────────────────────────
 echo.
 echo [log] Last 40 lines of %LOG%:
 echo ================================================================
