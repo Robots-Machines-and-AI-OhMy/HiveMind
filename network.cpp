@@ -7,11 +7,13 @@
 // Windows headers. Including it before Network.hpp (which pulls in
 // msquic.h -> windows.h) ensures extern declarations are visible
 // before the Windows macro pollution can interfere.
+
 #include "global.hpp"
 #include "global_strings.hpp"
 #include "Calculate_Performance.hpp"
 #include "Raft_Engine.hpp"
 #include "Network.hpp"
+
 // Network.hpp sets WIN32_LEAN_AND_MEAN + NOMINMAX + winsock2.h
 // before msquic.h, so the order above is safe.
 
