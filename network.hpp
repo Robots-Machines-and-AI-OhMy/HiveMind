@@ -15,6 +15,22 @@
 //   All public methods on NetworkManager are thread-safe unless noted.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// MUST come before any Windows or MSQuic headers.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+// Prevent windows.h from defining min/max macros that
+// conflict with std::numeric_limits and NuRaft internals.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include <winsock2.h>   // winsock2 before windows.h / msquic
+#include <ws2tcpip.h>
+#include <windows.h>
+
 #include <string>
 #include <vector>
 #include <functional>
@@ -22,8 +38,8 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <cstdint>
 
-// MSQuic (pre-installed, headers on include path)
 #include <msquic.h>
 
 #include "global.hpp"

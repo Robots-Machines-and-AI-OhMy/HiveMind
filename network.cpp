@@ -1,17 +1,18 @@
-// Network.cpp
+// network.cpp
 // ─────────────────────────────────────────────────────────────────────────────
 // MindMesh network layer implementation.
-//
-// MSQuic is used for all cluster data transport (heartbeats, offload requests,
-// process bundles).  UDP broadcast on SCAN_UDP_PORT is used for peer discovery
-// only — it carries no sensitive data and does not participate in the QUIC
-// security model.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#include "Network.hpp"
-#include "Raft_Engine.hpp"
-#include "Calculate_Performance.hpp"
+// global.hpp MUST come first — it only depends on <string> and has no
+// Windows headers. Including it before Network.hpp (which pulls in
+// msquic.h -> windows.h) ensures extern declarations are visible
+// before the Windows macro pollution can interfere.
 #include "global.hpp"
+#include "Calculate_Performance.hpp"
+#include "Raft_Engine.hpp"
+#include "Network.hpp"
+// Network.hpp sets WIN32_LEAN_AND_MEAN + NOMINMAX + winsock2.h
+// before msquic.h, so the order above is safe.
 
 #include <iostream>
 #include <sstream>
@@ -21,13 +22,9 @@
 #include <thread>
 #include <algorithm>
 
-// Windows sockets for UDP scan (MSQuic handles the QUIC side).
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
+// winsock2/msquic already included via Network.hpp.
+// ws2_32.lib linked via CMakeLists.txt — no pragma needed.
+#include <ws2tcpip.h>   // inet_pton, getaddrinfo extras
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wire formats for the UDP scan protocol (plain ASCII, null-terminated)

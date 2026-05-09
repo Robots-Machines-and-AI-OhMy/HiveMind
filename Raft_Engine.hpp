@@ -110,7 +110,7 @@ public:
     // ── Introspection ─────────────────────────────────────────────────────────
     bool is_leader() const;
     int  leader_id() const;
-    int  my_node_id() const { return LOCAL_RAFT_NODE_ID; }
+    int  my_node_id() const;  // returns LOCAL_RAFT_NODE_ID; defined in .cpp
 
     std::unordered_map<int, NodeInfo> node_snapshot() const;
 

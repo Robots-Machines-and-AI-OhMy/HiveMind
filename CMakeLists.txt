@@ -112,6 +112,10 @@ add_library(offload_hook SHARED
         global.cpp
 )
 target_include_directories(offload_hook PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_INCLUDE}" "${NURAFT_ASIO}")
+# Prevent windows.h min/max macros from breaking NuRaft and std:: usage
+target_compile_definitions(offload_hook PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(offload_hook PRIVATE
+        /FI"${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp")
 target_link_libraries(offload_hook PRIVATE
         kernel32
         ws2_32
@@ -182,10 +186,15 @@ add_executable(MindMesh
         HiveMindCLI.cpp
         compute_check.cpp
         global.cpp
-        Raft_Engine.cpp
         network.cpp
+        Raft_Engine.cpp
+        #network.cpp   # old stub — replaced by Network.cpp
 )
 target_include_directories(MindMesh PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_INCLUDE}" "${NURAFT_ASIO}")
+target_compile_definitions(MindMesh PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+# Force-include the PCH so winsock2.h always precedes windows.h in every TU
+target_compile_options(MindMesh PRIVATE
+        /FI"${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp")
 target_link_libraries(MindMesh PRIVATE
         kernel32
         ws2_32
