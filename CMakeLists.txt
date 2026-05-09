@@ -110,6 +110,7 @@ add_library(offload_hook SHARED
         network.cpp
         Raft_Engine.cpp
         compute_check.cpp
+        Calculate_Performance.cpp
         global.cpp
 )
 target_include_directories(offload_hook PRIVATE
@@ -118,7 +119,7 @@ target_include_directories(offload_hook PRIVATE
         "${NURAFT_ASIO}")
 target_compile_definitions(offload_hook PRIVATE ${MINDMESH_COMPILE_DEFS})
 target_compile_options(offload_hook PRIVATE ${MINDMESH_PCH_FLAG})
-target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 "${MSQUIC_LIB}")
+target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh "${MSQUIC_LIB}")
 copy_msquic_dll(offload_hook)
 link_nuraft(offload_hook)
 

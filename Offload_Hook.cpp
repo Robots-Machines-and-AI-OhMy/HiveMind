@@ -40,8 +40,10 @@ static void WINAPI AskEngine(QueueEntry* entry)
 {
     if (!entry) return;
 
-    __try {
-        // Build an opaque process_id for the leader to log.
+    // Use C++ try/catch — __try is incompatible with C++ objects
+    // (std::string, NetworkManager) under /EHsc. The effect is the same:
+    // any unexpected exception falls back to running locally.
+    try {
         char pid_buf[MAX_PATH + 32] = {};
         sprintf_s(pid_buf, sizeof(pid_buf), "proc_%lu",
                   entry->profile.caller_pid);
@@ -50,10 +52,7 @@ static void WINAPI AskEngine(QueueEntry* entry)
         NetworkManager& net = NetworkManager::getInstance();
 
         if (net.isConnected()) {
-            // Delegates to RaftDistribution::request_offload().
-            // Returns the target node IP, or "" if no placement found.
             std::string target = net.requestOffload(process_id);
-
             if (!target.empty()) {
                 entry->decision = OFFLOAD_YES;
                 wcsncpy_s(entry->target_node, 256,
@@ -65,8 +64,7 @@ static void WINAPI AskEngine(QueueEntry* entry)
         } else {
             entry->decision = OFFLOAD_NO;
         }
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    } catch (...) {
         entry->decision = OFFLOAD_FALLBACK;
     }
 
