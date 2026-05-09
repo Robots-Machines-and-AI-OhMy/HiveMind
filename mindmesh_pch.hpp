@@ -1,7 +1,5 @@
-// mindmesh_pch.hpp
-// Force-included before every translation unit in MindMesh and offload_hook.
-// Ensures WIN32_LEAN_AND_MEAN, NOMINMAX, and winsock2.h are always first,
-// regardless of individual file include order.
+// mindmesh_pch.hpp — force-included (/FI) before every TU
+// Establishes correct Windows header order, then makes globals visible.
 
 #ifndef MINDMESH_PCH_HPP
 #define MINDMESH_PCH_HPP
@@ -15,10 +13,15 @@
 #ifndef UNICODE
 #define UNICODE
 #endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
 
-// winsock2 must come before windows.h
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+
+// global.hpp has zero includes — safe here
+#include "global.hpp"
 
 #endif // MINDMESH_PCH_HPP

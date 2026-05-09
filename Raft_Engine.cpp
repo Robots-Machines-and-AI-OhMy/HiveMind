@@ -26,6 +26,7 @@
 
 // global.hpp first — no Windows deps, just <string> + extern decls.
 #include "global.hpp"
+#include "global_strings.hpp"
 #include "Raft_Engine.hpp"
 #include "Network.hpp"    // QuicTransport full definition
 
@@ -49,7 +50,7 @@
 namespace nuraft_detail {
 struct RaftImpl {
     nuraft::ptr<nuraft::raft_server>  server;
-    nuraft::ptr<nuraft::asio_service> asio_svc;
+    // asio_service is managed internally by raft_launcher in this NuRaft version
 };
 } // namespace nuraft_detail
 
@@ -331,7 +332,8 @@ public:
         when_done(null_resp, ex);
     }
 
-    bool is_abandoned() { return false; }  // not virtual in this NuRaft version
+    uint64_t get_id() const override { return 0; }
+    bool is_abandoned() const override { return false; }
 
 private:
     QuicTransport& quic_;
@@ -366,7 +368,9 @@ public:
     nuraft::ptr<nuraft::cluster_config> load_config()  override { return cluster_config_; }
     void save_config(const nuraft::cluster_config&)    override {}
     void save_state(const nuraft::srv_state& s)        override {
-        srv_state_ = nuraft::cs_new<nuraft::srv_state>(s);
+        // srv_state is non-copyable; update fields individually.
+        srv_state_->set_term(s.get_term());
+        srv_state_->set_voted_for(s.get_voted_for());
     }
     nuraft::ptr<nuraft::srv_state>      read_state()   override { return srv_state_; }
     nuraft::ptr<nuraft::log_store>      load_log_store() override { return log_store_; }
@@ -427,8 +431,8 @@ void RaftDistribution::start()
     // Server state.
     auto srv_state = nuraft::cs_new<nuraft::srv_state>();
 
-    // ASIO service for NuRaft timers.
-    impl_->asio_svc = nuraft::cs_new<nuraft::asio_service>();
+    // ASIO is managed internally by raft_launcher in this NuRaft version.
+    // asio_service::options is a plain config struct passed to launcher::init.
 
     // Cluster config.
     auto cluster_config = nuraft::cs_new<nuraft::cluster_config>();
@@ -456,15 +460,23 @@ void RaftDistribution::start()
     // Launch raft_server with no built-in TCP listener (port 0).
     // Pass nullptr for logger to suppress console output; swap for a real
     // logger in production.
+    // Build asio_service::options (plain config struct, not a shared_ptr)
+    nuraft::asio_service::options asio_opts;
+    asio_opts.thread_pool_size_ = 4;
+
+    // Build raft_server::init_options — carries the rpc_client_factory
+    nuraft::raft_server::init_options init_opts;
+    init_opts.raft_callback_ = nullptr;
+
     nuraft::raft_launcher launcher;
     impl_->server = launcher.init(
         sm,
         state_mgr,
-        nullptr,            // logger — null = no output
-        0,                  // listening port (0 = disabled, QUIC handles transport)
-        impl_->asio_svc,
+        nullptr,      // logger (null = silent; swap for a real logger in production)
+        0,            // listening port (0 = no built-in TCP; QUIC handles transport)
+        asio_opts,
         params,
-        rpc_factory);
+        init_opts);
 
     if (!impl_->server) {
         throw std::runtime_error("[raft] Failed to initialise raft_server");
@@ -482,10 +494,7 @@ void RaftDistribution::stop()
         impl_->server->shutdown();
         impl_->server.reset();
     }
-    if (impl_->asio_svc) {
-        impl_->asio_svc->stop();
-        impl_->asio_svc.reset();
-    }
+    // asio_service lifecycle is managed by raft_launcher in this NuRaft version
 }
 
 // ── Heartbeat API ─────────────────────────────────────────────────────────────

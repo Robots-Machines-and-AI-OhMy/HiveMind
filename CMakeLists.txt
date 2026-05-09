@@ -33,7 +33,7 @@ set(MSQUIC_LIB
 
 # Also need the DLL next to the exe at runtime.
 set(MSQUIC_DLL
-        "${MSQUIC_ROOT}/artifacts/bin/windows/x64/$<IF:$<CONFIG:Debug>,debug,release>/msquic.dll")
+        "${MSQUIC_ROOT}/artifacts/bin/windows/x64_Debug_openssl/msquic.dll")
 
 if (NOT EXISTS "${MSQUIC_INCLUDE}/msquic.h")
     message(WARNING
@@ -115,7 +115,7 @@ target_include_directories(offload_hook PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_IN
 # Prevent windows.h min/max macros from breaking NuRaft and std:: usage
 target_compile_definitions(offload_hook PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(offload_hook PRIVATE
-        /FI"${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp")
+        /FI${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp)
 target_link_libraries(offload_hook PRIVATE
         kernel32
         ws2_32
@@ -185,20 +185,21 @@ endforeach()
 add_executable(MindMesh
         HiveMindCLI.cpp
         compute_check.cpp
+        Calculate_Performance.cpp
         global.cpp
         network.cpp
         Raft_Engine.cpp
-        #network.cpp   # old stub — replaced by Network.cpp
 )
 target_include_directories(MindMesh PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_INCLUDE}" "${NURAFT_ASIO}")
 target_compile_definitions(MindMesh PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # Force-include the PCH so winsock2.h always precedes windows.h in every TU
 target_compile_options(MindMesh PRIVATE
-        /FI"${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp")
+        /FI${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp)
 target_link_libraries(MindMesh PRIVATE
         kernel32
         ws2_32
         advapi32
+        pdh
         "${MSQUIC_LIB}"
 )
 copy_msquic_dll(MindMesh)

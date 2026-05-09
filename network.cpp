@@ -8,6 +8,7 @@
 // msquic.h -> windows.h) ensures extern declarations are visible
 // before the Windows macro pollution can interfere.
 #include "global.hpp"
+#include "global_strings.hpp"
 #include "Calculate_Performance.hpp"
 #include "Raft_Engine.hpp"
 #include "Network.hpp"
