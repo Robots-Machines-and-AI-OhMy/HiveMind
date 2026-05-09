@@ -169,6 +169,11 @@ int main() {
                 break;
 
             case EXIT:
+				if (NetManager.isConnected()) {
+					cout << "Leaving HiveMind network...\n";
+                    NetManager.disconnect();
+                    cout << "Safely disconnected from network.\n\n";
+				}
                 cout << "Closing HiveMind CLI...\n";
                 running = false;
                 break;
