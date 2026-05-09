@@ -1,8 +1,10 @@
 #include <iostream>
 #include <string>
-//#include "network.hpp"
+#include <vector>
+#include "Network.hpp"
 #include "compute_check.hpp"
 #include "global.hpp"
+#include "global_strings.hpp"
 
 using namespace std;
 
@@ -31,15 +33,15 @@ Command getCommand(const string& cmd) {
 }
 
 int main() {
-    metric=metric_calculation();
+    metric = metric_calculation();
     string input;
     string networkName;
     string password;
 
-    bool isConnected = false;
     bool running = true;
 
-    //NetworkManager* NetManager = NetworkManager::getNetworkManager(running);
+    NetworkManager& NetManager = NetworkManager::getInstance();
+    NetManager.init();
 
     cout << "Metric Score: " << metric << endl;
     cout << "=============================\n";
@@ -72,58 +74,94 @@ int main() {
                 cout << "Enter the password for your network or NA for no password: ";
                 cin >> password;
 
-                //if (password == "NA") NetManager->createNetwork(networkName, ""); else NetManager->createNetwork(networkName, password);
+                if (password == "NA") password = "";
+                if (NetManager.createNetwork(networkName, password))
+                    cout << "Network '" << networkName << "' created. You are the leader.\n\n";
+                else
+                    cout << "Error: Could not create network.\n\n";
                 break;
 
-            case SCAN:
+            case SCAN: {
                 cout << "Scanning local network...\n";
-                cout << "Found networks:\n";
-
-                // Later you can replace this with NetManager->getNetworkInfo()
-                cout << "1. HiveMind-Lab | Password: Yes\n";
-                cout << "2. HiveMind-Test | Password: No\n\n";
+                vector<ScanResult> results = NetManager.scan();
+                if (results.empty()) {
+                    cout << "No HiveMind networks found.\n\n";
+                } else {
+                    cout << "Found networks:\n";
+                    for (size_t i = 0; i < results.size(); ++i) {
+                        cout << (i + 1) << ". "
+                             << results[i].name
+                             << " | Leader: " << results[i].leader_ip
+                             << " | Password: " << (results[i].has_password ? "Yes" : "No")
+                             << "\n";
+                    }
+                    cout << "\n";
+                }
                 break;
+            }
 
-            case JOIN:
+            case JOIN: {
+                cout << "Scanning for networks...\n";
+                vector<ScanResult> results = NetManager.scan();
+                if (results.empty()) {
+                    cout << "No networks found. Use 'scan' first.\n\n";
+                    break;
+                }
+
+                for (size_t i = 0; i < results.size(); ++i) {
+                    cout << (i + 1) << ". "
+                         << results[i].name
+                         << " (" << results[i].leader_ip << ")"
+                         << (results[i].has_password ? " [password required]" : "")
+                         << "\n";
+                }
+
                 cout << "Enter network name: ";
                 cin >> networkName;
 
                 cout << "Enter password: ";
                 cin >> password;
 
-                if (password == "1234") {
-                    isConnected = true;
-                    cout << "Connected to " << networkName << " successfully.\n\n";
-                } else {
-                    cout << "Error: Connection attempt failed.\n\n";
+                string leader_ip;
+                for (auto& r : results)
+                    if (r.name == networkName) { leader_ip = r.leader_ip; break; }
+
+                if (leader_ip.empty()) {
+                    cout << "Error: Network '" << networkName << "' not found in scan results.\n\n";
+                    break;
                 }
+
+                if (NetManager.joinNetwork(leader_ip, networkName, password))
+                    cout << "Connected to " << networkName << " successfully.\n\n";
+                else
+                    cout << "Error: Connection attempt failed.\n\n";
                 break;
+            }
 
             case STATUS:
-                if (isConnected) {
+                if (NetManager.isConnected()) {
                     cout << "Network Status:\n";
-                    cout << "Connected: Yes\n";
-                    cout << "Node Role: Follower\n";
-                    cout << "CPU Usage: 34%\n";
-                    cout << "Memory Usage: 58%\n";
-                    cout << "Connected Nodes: 4\n\n";
+                    cout << NetManager.statusString() << "\n\n";
                 } else {
                     cout << "Error: Not connected to a HiveMind network.\n\n";
                 }
                 break;
 
             case GETLEADER:
-                if (isConnected) {
-                    cout << "Current Leader Node: 192.168.1.10\n\n";
+                if (NetManager.isConnected()) {
+                    string lip = NetManager.leaderIp();
+                    cout << "Current Leader Node: "
+                         << (lip.empty() ? "election in progress" : lip)
+                         << "\n\n";
                 } else {
                     cout << "Error: Not connected to a HiveMind network.\n\n";
                 }
                 break;
 
             case DISCONNECT:
-                if (isConnected) {
+                if (NetManager.isConnected()) {
                     cout << "Leaving HiveMind network...\n";
-                    isConnected = false;
+                    NetManager.disconnect();
                     cout << "Safely disconnected from network.\n\n";
                 } else {
                     cout << "Error: No active network connection.\n\n";
@@ -141,6 +179,8 @@ int main() {
                 break;
         }
     }
+
+    NetManager.cleanup();
     cout << "Closed";
     return 0;
 }
