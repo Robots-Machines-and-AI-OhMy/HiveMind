@@ -3,15 +3,21 @@
  * --------------------------------------------------------------
  * Non-main component: loads hook.dll and wires in the engines.
  *
- * AskEngine      — stub (timeout path). Replace with real impl
- *                  when teammate delivers leader comms layer.
- * TransferEngine — stub for demo (leader/follower not ready).
- *                  LINK: swap NULL -> TransferEngineImpl in
- *                  Inject() once leader-follower is working.
+ * AskEngine — calls NetworkManager::requestOffload() if the
+ *             network layer is connected.  Falls back to
+ *             OFFLOAD_NO (local run) if not connected or if
+ *             the leader returns no target.
+ *
+ * TransferEngine — stub (NULL) for demo.
+ *                  LINK: swap NULL -> TransferEngineImpl once
+ *                  end-to-end bundle transfer is validated.
  * --------------------------------------------------------------
  */
 
 #include "Offload_Hook.hpp"
+#include "Network.hpp"   /* NetworkManager::requestOffload() */
+
+#include <string>
 
 /* ============================================================
  *  MODULE STATE
@@ -22,32 +28,49 @@ static FnHookTeardown      g_teardown_fn   = NULL;
 static FnHookFilterAddName g_filter_add_fn = NULL;
 
 /* ============================================================
- *  AskEngine STUB
+ *  AskEngine
  *
- *  Does NOT signal hDecisionEvent — the 200 ms timeout fires
- *  and the process runs locally.  This is correct, expected
- *  behaviour until the leader comms layer is wired in.
- *
- *  LINK: when ready, replace AskEngine in Inject() below with
- *        the real function pointer.  Implementation steps:
- *
- *    1. Post entry to a dedicated worker thread.
- *    2. Call fill_capability_request(&req, &entry->profile)
- *       (from leader_protocol.hpp) to build the wire packet.
- *    3. Send CapabilityRequest to the RAFT leader over lsQUIC
- *       on port LEADER_PORT within LEADER_RESPONSE_TIMEOUT_MS.
- *    4. Read OffloadResponse from the leader.
- *    5. Set entry->decision = response.decision.
- *       If YES: wcsncpy response.target_node -> entry->target_node.
- *    6. Signal entry->hDecisionEvent to unblock the interceptor.
- *       Check entry->in_use first — if 0 the slot already timed
- *       out and was released; do not signal.
+ *  Called on the intercepting thread inside Hook_CreateProcessW.
+ *  Must signal entry->hDecisionEvent before returning.
+ *  The outer wait in hook.c allows DECISION_TIMEOUT_MS total
+ *  (200 ms) — keep this function fast.
  * ============================================================ */
 
-static void WINAPI AskEngine(QueueEntry *entry)
+static void WINAPI AskEngine(QueueEntry* entry)
 {
-    (void)entry;
-    /* Stub: fall through to timeout in hook.c */
+    if (!entry) return;
+
+    __try {
+        // Build an opaque process_id for the leader to log.
+        char pid_buf[MAX_PATH + 32] = {};
+        sprintf_s(pid_buf, sizeof(pid_buf), "proc_%lu",
+                  entry->profile.caller_pid);
+        std::string process_id(pid_buf);
+
+        NetworkManager& net = NetworkManager::getInstance();
+
+        if (net.isConnected()) {
+            // Delegates to RaftDistribution::request_offload().
+            // Returns the target node IP, or "" if no placement found.
+            std::string target = net.requestOffload(process_id);
+
+            if (!target.empty()) {
+                entry->decision = OFFLOAD_YES;
+                wcsncpy_s(entry->target_node, 256,
+                          std::wstring(target.begin(), target.end()).c_str(),
+                          _TRUNCATE);
+            } else {
+                entry->decision = OFFLOAD_NO;
+            }
+        } else {
+            entry->decision = OFFLOAD_NO;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        entry->decision = OFFLOAD_FALLBACK;
+    }
+
+    SetEvent(entry->hDecisionEvent);
 }
 
 /* ============================================================
@@ -67,11 +90,11 @@ BOOL WINAPI Inject(void)
         return FALSE;
     }
 
-    FnHookInit init_fn = (FnHookInit)
+    FnHookInit init_fn  = (FnHookInit)
         GetProcAddress(g_hook_dll, "HookInit");
-    g_teardown_fn   = (FnHookTeardown)
+    g_teardown_fn       = (FnHookTeardown)
         GetProcAddress(g_hook_dll, "HookTeardown");
-    g_filter_add_fn = (FnHookFilterAddName)
+    g_filter_add_fn     = (FnHookFilterAddName)
         GetProcAddress(g_hook_dll, "hook_filter_add_name");
 
     if (!init_fn) {
@@ -83,12 +106,11 @@ BOOL WINAPI Inject(void)
     }
 
     /*
-     * LINK AskEngine:      replace AskEngine with real fn ptr
-     *                      when leader comms layer is ready.
-     * LINK TransferEngine: replace NULL with TransferEngineImpl
-     *                      once leader-follower is working.
+     * AskEngine      — live, calls NetworkManager::requestOffload().
+     * TransferEngine — LINK: replace NULL with TransferEngineImpl
+     *                  when bundle transfer is ready.
      */
-    init_fn(AskEngine, NULL);  /* TransferEngine stubbed for demo */
+    init_fn(AskEngine, NULL);
     return TRUE;
 }
 

@@ -27,10 +27,23 @@
 //   };
 // ─────────────────────────────────────────────────────────────────────────────
 
-#include "raft_distribution.hpp"
+// Raft_Engine.cpp
+// NuRaft types are confined to this translation unit.
+// No NuRaft headers leak into Raft_Engine.hpp.
+
+#include "Raft_Engine.hpp"
 #include "global.hpp"
 
 #include <libnuraft/nuraft.hxx>
+
+// pImpl struct — holds all NuRaft objects so Raft_Engine.hpp
+// stays free of nuraft:: types.
+namespace nuraft_detail {
+struct RaftImpl {
+    nuraft::ptr<nuraft::raft_server>  server;
+    nuraft::ptr<nuraft::asio_service> asio_svc;
+};
+} // namespace nuraft_detail
 
 #include <algorithm>
 #include <cassert>
@@ -306,7 +319,7 @@ private:
 
 // ── RPC Listener (inbound) ───────────────────────────────────────────────────
 // NuRaft's built-in ASIO listener is TCP-based.  For QUIC we skip it and
-// feed inbound bytes via raft_server_->handle_custom_notification() from
+// feed inbound bytes via impl_->server->handle_custom_notification() from
 // the QuicTransport receive callback registered in start().
 //
 // Provide a no-op listener so NuRaft doesn't spin up its own TCP listener.
@@ -326,6 +339,7 @@ RaftDistribution::RaftDistribution(
     : quic_(quic)
     , peer_endpoints_(peer_endpoints)
 {
+    impl_ = std::make_unique<nuraft_detail::RaftImpl>();
     // Pre-populate node table from the static peer list.
     for (auto& [id, ip] : peer_ips) {
         NodeInfo info;
@@ -383,7 +397,7 @@ void RaftDistribution::start() {
     auto srv_state = nuraft::cs_new<nuraft::srv_state>();
 
     // ── 4. ASIO service (for NuRaft's internal timers) ────────────────────────
-    asio_svc_ = nuraft::cs_new<nuraft::asio_service>();
+    impl_->asio_svc = nuraft::cs_new<nuraft::asio_service>();
 
     // ── 5. NuRaft params ─────────────────────────────────────────────────────
     nuraft::raft_params params;
@@ -444,17 +458,17 @@ void RaftDistribution::start() {
 
     // ── 9. Launch raft_server ────────────────────────────────────────────────
     nuraft::raft_launcher launcher;
-    raft_server_ = launcher.init(
+    impl_->server = launcher.init(
         sm,
         state_mgr,
         nuraft::cs_new<nuraft::logger_wrapper>(
             nuraft::cs_new<nuraft::console_logger>(), 4),
         /*listening_port=*/ 0,   // 0 = no built-in TCP listener (QUIC handles it)
-        asio_svc_,
+        impl_->asio_svc,
         params,
         rpc_factory);
 
-    if (!raft_server_) {
+    if (!impl_->server) {
         throw std::runtime_error("Failed to initialise NuRaft raft_server");
     }
 
@@ -467,7 +481,7 @@ void RaftDistribution::start() {
             std::memcpy(buf->data_begin(), data, len);
             auto msg = nuraft::msg_serializer::deserialize(*buf);
             if (msg) {
-                raft_server_->process_req(*msg);
+                impl_->server->process_req(*msg);
             }
         });
 
@@ -478,13 +492,13 @@ void RaftDistribution::start() {
 void RaftDistribution::stop() {
     if (!running_) return;
     running_ = false;
-    if (raft_server_) {
-        raft_server_->shutdown();
-        raft_server_.reset();
+    if (impl_->server) {
+        impl_->server->shutdown();
+        impl_->server.reset();
     }
-    if (asio_svc_) {
-        asio_svc_->stop();
-        asio_svc_.reset();
+    if (impl_->asio_svc) {
+        impl_->asio_svc->stop();
+        impl_->asio_svc.reset();
     }
 }
 
@@ -512,38 +526,48 @@ double RaftDistribution::local_metric() const {
     return local_metric_.load(std::memory_order_relaxed);
 }
 
-void RaftDistribution::update_local_metric(double metric) {
-    metric = std::max(0.0, std::min(1.0, metric));
-    local_metric_.store(metric, std::memory_order_relaxed);
-
-    // Also update our own entry in the node table.
+void RaftDistribution::update_local_metric(double heartbeat_score)
+{
+    local_metric_.store(heartbeat_score);
+    // Keep our own NodeInfo in sync so elect_target sees an up-to-date
+    // local score when deciding whether to offload or run locally.
     std::lock_guard<std::mutex> lk(nodes_mtx_);
-    auto it = nodes_.find(LOCAL_RAFT_NODE_ID);
-    if (it != nodes_.end()) {
-        it->second.load = metric;
-    }
+    auto& self = nodes_[LOCAL_RAFT_NODE_ID];
+    self.id              = LOCAL_RAFT_NODE_ID;
+    self.ip              = LOCAL_NODE_IP;
+    self.heartbeat_score = heartbeat_score;
+    self.benchmark_metric= metric;  // global from global.hpp
 }
 
 // ── Offload placement ────────────────────────────────────────────────────────
 
-std::string RaftDistribution::elect_target() const {
-    // Must hold nodes_mtx_ before calling.
-    // Returns the IP of the node with the highest score().
-    int    best_id    = -1;
-    double best_score = -1.0;
+std::string RaftDistribution::elect_target(double requestor_score) const
+{
+    std::lock_guard<std::mutex> lk(nodes_mtx_);
 
+    // Find the node with the highest heartbeat_score.
+    const NodeInfo* best = nullptr;
     for (auto& [id, info] : nodes_) {
-        double s = info.score();
-        if (s > best_score) {
-            best_score = s;
-            best_id    = id;
-        }
+        if (info.ip.empty()) continue;  // peer not yet fully identified
+        if (!best || info.score() > best->score())
+            best = &info;
     }
 
-    if (best_id < 0) return "";
+    if (!best) return "";
 
-    auto it = nodes_.find(best_id);
-    return (it != nodes_.end()) ? it->second.ip : "";
+    // Only offload if the best candidate is meaningfully better than
+    // the requestor.  "Meaningfully" is defined as > OFFLOAD_THRESHOLD_PCT
+    // better, to avoid thrashing when nodes are similarly loaded.
+    //
+    // requestor_score == 0 means the requestor deliberately asked for
+    // offload (e.g. node is overloaded) — always honour it if a target exists.
+    if (requestor_score > 0.0) {
+        double required = requestor_score * (1.0 + OFFLOAD_THRESHOLD_PCT);
+        if (best->score() < required)
+            return "";  // no node is sufficiently better — run locally
+    }
+
+    return best->ip;
 }
 
 std::string RaftDistribution::request_offload(const std::string& process_id,
@@ -562,7 +586,7 @@ std::string RaftDistribution::request_offload(const std::string& process_id,
         std::string target_ip;
         {
             std::lock_guard<std::mutex> lk(nodes_mtx_);
-            target_ip = elect_target();
+            target_ip = elect_target(local_metric_.load());
         }
 
         OffloadResponse rsp;
@@ -572,7 +596,7 @@ std::string RaftDistribution::request_offload(const std::string& process_id,
         auto entry = ProcessStateMachine::make_response_entry(
             rsp, LOCAL_RAFT_NODE_ID, process_id);
 
-        auto result = raft_server_->append_entries({ entry });
+        auto result = impl_->server->append_entries({ entry });
         if (!result || !result->get_accepted()) {
             std::lock_guard<std::mutex> lk(pending_mtx);
             pending.erase(process_id);
@@ -632,13 +656,13 @@ std::string RaftDistribution::request_offload(const std::string& process_id,
 // ── Introspection ─────────────────────────────────────────────────────────────
 
 bool RaftDistribution::is_leader() const {
-    if (!raft_server_) return false;
-    return raft_server_->is_leader();
+    if (!impl_->server) return false;
+    return impl_->server->is_leader();
 }
 
 int RaftDistribution::leader_id() const {
-    if (!raft_server_) return -1;
-    return raft_server_->get_leader();
+    if (!impl_->server) return -1;
+    return impl_->server->get_leader();
 }
 
 std::unordered_map<int, NodeInfo> RaftDistribution::node_snapshot() const {
@@ -694,10 +718,10 @@ void handle_forwarded_offload(RaftDistribution& rd,
     // Replicate the decision so ALL nodes resolve their pending futures.
     auto entry = ProcessStateMachine::make_response_entry(
         rsp, req.requester_node_id, req.process_id);
-    // (raft_server_ is not directly accessible here; in production make it
+    // (impl_->server is not directly accessible here; in production make it
     //  a method on RaftDistribution or pass the raft_server pointer in.)
     //
-    // Pseudo: raft_server_->append_entries({ entry });
+    // Pseudo: impl_->server->append_entries({ entry });
     (void)entry;
 
     std::cout << "[raft][leader] Offload decision: process=" << req.process_id

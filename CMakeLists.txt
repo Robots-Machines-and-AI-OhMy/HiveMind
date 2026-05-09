@@ -6,9 +6,6 @@ set(CMAKE_CXX_STANDARD 20)
 
 # ============================================================
 # TOOLCHAIN GUARD
-# hook.c uses __try/__except (MSVC SEH) and __declspec().
-# MinGW and Clang-cl do not support these — MSVC is required.
-# In CLion: Settings -> Toolchains -> set to Visual Studio.
 # ============================================================
 if (NOT MSVC)
     message(FATAL_ERROR
@@ -18,154 +15,182 @@ if (NOT MSVC)
             "MinGW and Clang are not supported.")
 endif()
 
-# NuRAFT:
-#FetchContent_Declare(NuRaft GIT_REPOSITORY https://github.com/eBay/NuRaft.git ...)
-#target_link_libraries(your_target PRIVATE NuRaft::NuRaft)
+# ============================================================
+# MSQuic — compiled in-repo using build.ps1 with -Tls openssl.
+# Headers and lib are relative to the project root.
+# Adjust MSQUIC_ROOT if your repo layout differs.
+# ============================================================
+set(MSQUIC_ROOT "${CMAKE_SOURCE_DIR}/msquic"
+        CACHE PATH "Root of the in-repo MSQuic build")
 
-# /EHa (async SEH) is only needed for hook.c which uses __try/__except.
-# Applied per-target to avoid D9025 warning from overriding CMake's
-# default /EHs on C++ targets that don't need it.
+# Headers ship with the MSQuic source.
+set(MSQUIC_INCLUDE "${MSQUIC_ROOT}/src/inc")
+
+# The Ninja/MSVC build outputs to artifacts/bin/... — pick the
+# config that matches CMAKE_BUILD_TYPE.
+set(MSQUIC_LIB
+        "${MSQUIC_ROOT}/artifacts/bin/windows/x64_Debug_openssl/msquic.lib")
+
+# Also need the DLL next to the exe at runtime.
+set(MSQUIC_DLL
+        "${MSQUIC_ROOT}/artifacts/bin/windows/x64/$<IF:$<CONFIG:Debug>,debug,release>/msquic.dll")
+
+if (NOT EXISTS "${MSQUIC_INCLUDE}/msquic.h")
+    message(WARNING
+            "MSQuic headers not found at ${MSQUIC_INCLUDE}.\n"
+            "Run build.ps1 -Tls openssl inside the msquic/ subdirectory first.")
+endif()
+
+# Copy msquic.dll next to every executable that needs it.
+function(copy_msquic_dll TARGET)
+    add_custom_command(TARGET ${TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MSQUIC_DLL}" "$<TARGET_FILE_DIR:${TARGET}>"
+            COMMENT "Copying msquic.dll for ${TARGET}")
+endfunction()
+
+# ============================================================
+# NuRaft — pre-installed or fetched.
+# Uncomment FetchContent block when ready to pull automatically.
+# ============================================================
+# include(FetchContent)
+# FetchContent_Declare(NuRaft
+#     GIT_REPOSITORY https://github.com/eBay/NuRaft.git
+#     GIT_TAG        master)
+# FetchContent_MakeAvailable(NuRaft)
+
+# NuRaft — in-repo build (sibling directory to msquic).
+set(NURAFT_ROOT "${CMAKE_SOURCE_DIR}/NuRaft"
+        CACHE PATH "Root of the in-repo NuRaft build")
+# Headers: NuRaft keeps them under include/libnuraft/
+set(NURAFT_INCLUDE "${NURAFT_ROOT}/include")
+# Lib: produced as nuraft.lib (not libnuraft.lib) by the MSVC build.
+set(NURAFT_LIB    "${NURAFT_ROOT}/build/nuraft.lib")
+# Asio ships bundled with NuRaft — header-only, no separate build needed.
+set(NURAFT_ASIO   "${NURAFT_ROOT}/asio/include")
+
+if (NOT EXISTS "${NURAFT_INCLUDE}/libnuraft/nuraft.hxx")
+    message(WARNING
+            "NuRaft headers not found at ${NURAFT_INCLUDE}.\n"
+            "Run cmake + build inside NuRaft/ first.")
+endif()
+
+# Helper: apply NuRaft includes/libs to a target.
+function(link_nuraft TARGET)
+    target_include_directories(${TARGET} PRIVATE
+            "${NURAFT_INCLUDE}"
+            "${NURAFT_ASIO}")
+    target_link_libraries(${TARGET} PRIVATE "${NURAFT_LIB}")
+endfunction()
+
+# ============================================================
+# /EHa — async SEH for hook.c; applied per-target only.
+# ============================================================
 
 # ============================================================
 # hook.dll
-# Core interceptor: IAT patch, process queue, OS filter, logging.
-# Compiled as C (not C++) — set explicitly so CLion/MSVC agree.
 # ============================================================
 add_library(hook SHARED hook.c)
-
-# Force hook.c to be treated as C regardless of file association
-# settings in the IDE or toolchain defaults.
 set_source_files_properties(hook.c PROPERTIES LANGUAGE C)
-
-# Remove CMake's default /EHs and replace with /EHa for SEH support.
 target_compile_options(hook PRIVATE /EHa)
-
 target_link_libraries(hook PRIVATE kernel32 psapi)
 
 # ============================================================
 # offload_hook.dll
-# Loader: wires AskEngine + TransferEngine stubs into hook.dll.
+# Loader: wires AskEngine (live) + TransferEngine (stub) into hook.dll.
+# Now includes Network.cpp + supporting files so AskEngine can
+# call NetworkManager::requestOffload().
 #
-# Demo mode: Offload_Hook.cpp only, kernel32 only.
-# LINK: when leader-follower is working, replace with:
-#   add_library(offload_hook SHARED Offload_Hook.cpp transfer_engine.cpp)
-#   target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 psapi)
+# LINK TransferEngine: when bundle transfer is ready, also add
+#   transfer_engine.cpp and link ws2_32 psapi.
 # ============================================================
-add_library(offload_hook SHARED Offload_Hook.cpp)
-target_link_libraries(offload_hook PRIVATE kernel32)
+add_library(offload_hook SHARED
+        Offload_Hook.cpp
+        network.cpp
+        Raft_Engine.cpp
+        compute_check.cpp
+        global.cpp
+)
+target_include_directories(offload_hook PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_INCLUDE}" "${NURAFT_ASIO}")
+target_link_libraries(offload_hook PRIVATE
+        kernel32
+        ws2_32
+        advapi32
+        "${MSQUIC_LIB}"
+)
+copy_msquic_dll(offload_hook)
+link_nuraft(offload_hook)
 
 # ============================================================
 # install_hook.exe
-# Writes/clears AppInit_DLLs registry keys for system-wide
-# injection.  Requires Administrator — the UAC manifest below
-# causes Windows to prompt for elevation automatically so you
-# do not need to launch it manually from an elevated prompt.
 # ============================================================
 add_executable(install_hook install_hook.cpp)
 target_link_libraries(install_hook PRIVATE advapi32)
-
-# FIX: Ensure hook.dll and offload_hook.dll are fully built before
-# install_hook or test_runner attempt to link and run post-build
-# copy steps. Without this, parallel Ninja builds (e.g. -j N) can
-# schedule the executable link — and its POST_BUILD copy of hook.dll
-# — before hook.dll itself has finished compiling and linking.
 add_dependencies(install_hook hook offload_hook)
 
-# UAC elevation via side-by-side manifest file.
-# The manifest is embedded into install_hook.exe at link time by mt.exe.
-# This avoids the LINK_FLAGS quoting issue that breaks Ninja + MSVC.
-set_target_properties(install_hook PROPERTIES
-        VS_USER_PROPS ""
-)
+set_target_properties(install_hook PROPERTIES VS_USER_PROPS "")
 target_sources(install_hook PRIVATE install_hook.manifest)
 set_source_files_properties(install_hook.manifest PROPERTIES
-        COMPILE_FLAGS ""          # not compiled
-        HEADER_FILE_ONLY TRUE
-)
-# Embed manifest explicitly for Ninja (non-VS generator)
+        COMPILE_FLAGS "" HEADER_FILE_ONLY TRUE)
+
 if (NOT CMAKE_GENERATOR MATCHES "Visual Studio")
     find_program(MT_EXE mt.exe
             HINTS
             "$ENV{WindowsSdkVerBinPath}x64"
             "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
-            "C:/Program Files (x86)/Windows Kits/10/bin/x64"
-    )
+            "C:/Program Files (x86)/Windows Kits/10/bin/x64")
     if (MT_EXE)
         add_custom_command(TARGET install_hook POST_BUILD
                 COMMAND "${MT_EXE}"
                 -manifest "${CMAKE_CURRENT_SOURCE_DIR}/install_hook.manifest"
                 "-outputresource:$<TARGET_FILE:install_hook>;1"
-                COMMENT "Embedding UAC manifest into install_hook.exe"
-        )
+                COMMENT "Embedding UAC manifest into install_hook.exe")
     else()
-        message(WARNING
-                "mt.exe not found — UAC manifest not embedded.\n"
-                "install_hook.exe must be run manually as Administrator.")
+        message(WARNING "mt.exe not found — UAC manifest not embedded.")
     endif()
 endif()
 
 # ============================================================
 # test_runner.exe
-# Proof-of-life: loads offload_hook.dll, wires in stubs,
-# launches processes, waits, then ejects.
 # ============================================================
 add_executable(test_runner Hook_Test.cpp)
 target_link_libraries(test_runner PRIVATE kernel32)
-
-# FIX: Same dependency guard for test_runner (see install_hook note above).
 add_dependencies(test_runner hook offload_hook)
 
 # ============================================================
-# remote_agent.exe
-# Runs on target nodes; receives process bundles and executes them.
-# Build this separately and deploy to every machine that will
-# receive offloaded processes.
-# Links ws2_32 for Winsock (TCP stub; replace with lsQUIC later).
+# remote_agent.exe  (uncomment when remote_agent.cpp is added)
 # ============================================================
-# remote_agent.exe — deploy to target nodes to receive offloaded processes.
-# Uncomment when remote_agent.cpp is added to the project.
 # add_executable(remote_agent remote_agent.cpp)
 # target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
 
 # ============================================================
-# POST-BUILD: copy DLLs next to each executable
-#
-# The C:\Tools copy is intentionally omitted here. hook.dll may
-# still be mapped into running processes from a prior AppInit_DLLs
-# registration, making it locked. CMake's copy_if_different cannot
-# handle a locked file and will fail the build. hook_test.bat handles
-# this copy after the build completes, using a retry loop and rename
-# workaround that works on locked DLLs.
-#
-# To register after build:
-#   Run the install_hook target from CLion (UAC prompt appears)
-#   — or run from an elevated cmd:
-#   install_hook.exe install C:\Tools\hook.dll
+# POST-BUILD: copy DLLs next to executables
 # ============================================================
 foreach(TARGET_EXE test_runner install_hook)
     add_custom_command(TARGET ${TARGET_EXE} POST_BUILD
-
-            # Copy DLLs next to the executable
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:hook>
             $<TARGET_FILE:offload_hook>
             $<TARGET_FILE_DIR:${TARGET_EXE}>
-
-            COMMENT "Copying DLLs for ${TARGET_EXE}"
-    )
+            COMMENT "Copying DLLs for ${TARGET_EXE}")
 endforeach()
 
 # ============================================================
-# MindMesh (teammate target — untouched)
+# MindMesh — main application (CLI + full network stack)
 # ============================================================
 add_executable(MindMesh
-        compute_check.cpp
-        matrix_funcs.cpp
-        global.cpp
         HiveMindCLI.cpp
-        #network.cpp
-)
-
-add_executable(matrix_tests
         compute_check.cpp
+        global.cpp
+        Raft_Engine.cpp
+        network.cpp
 )
+target_include_directories(MindMesh PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_INCLUDE}" "${NURAFT_ASIO}")
+target_link_libraries(MindMesh PRIVATE
+        kernel32
+        ws2_32
+        advapi32
+        "${MSQUIC_LIB}"
+)
+copy_msquic_dll(MindMesh)
+link_nuraft(MindMesh)

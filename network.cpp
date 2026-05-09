@@ -1,378 +1,673 @@
-/*
- * handles networking functions
- */
+// Network.cpp
+// ─────────────────────────────────────────────────────────────────────────────
+// MindMesh network layer implementation.
+//
+// MSQuic is used for all cluster data transport (heartbeats, offload requests,
+// process bundles).  UDP broadcast on SCAN_UDP_PORT is used for peer discovery
+// only — it carries no sensitive data and does not participate in the QUIC
+// security model.
+// ─────────────────────────────────────────────────────────────────────────────
 
-#include "msquic\src\inc\msquic.hpp" //QUIC library
-#include "tiny-sha\src\tiny_sha.h" //SHA library
-#include <iostream>
-#include <string>
-#include <vector> // basically array lists
-#include <chrono> // timekeeper
-#include <winsock2.h> // networking package
-#include <thread> // for async operations
-#include <mutex> // locking mechanisms
-#include <unordered_map> // hashmaps
-
+#include "Network.hpp"
+#include "Raft_Engine.hpp"
+#include "Calculate_Performance.hpp"
 #include "global.hpp"
-#include "network.hpp"
-#include "containerization.hpp" // handles process containerization logic
-#include "Calculate_Performance.hpp" //dynamic performance metric calculation
 
-using namespace std;
+#include <iostream>
+#include <sstream>
+#include <cstring>
+#include <cassert>
+#include <chrono>
+#include <thread>
+#include <algorithm>
 
-// network constructor, password may be NULL
-NetworkManager::Network::Network(string netName, string leader, string password) {
-    name = netName;
-	long long currentTime = std::chrono::time_point_cast<std::chrono::nanoseconds>(
-            std::chrono::high_resolution_clock::now()
-        ).time_since_epoch().count();
-	if (!(SHA256((const uint8_t*)currentTime, sizeof(currentTime), &netUID)))
-		cout << "Hash of current time (for UID) failed" << endl;
-	
-    if (password == "")
-		passValid = false;
-	else {
-		if (!(SHA256((const uint8_t*)(c_str(password)), password.length, &passHash)))
-			cout << "Hash of new network's password failed!" << endl; 
-		passValid = true; 
-	}
-    leadIP = leader;
+// Windows sockets for UDP scan (MSQuic handles the QUIC side).
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wire formats for the UDP scan protocol (plain ASCII, null-terminated)
+//
+//  Broadcast: "MINDMESH_SCAN\0"
+//  Reply:     "MINDMESH_HERE name=<name> pw=<0|1>\0"
+//
+// Heartbeat payload (sent over a QUIC stream, binary):
+//   [8 bytes double] remaining performance metric (Calculate_Performance)
+//   [8 bytes double] benchmark metric             (global::metric)
+//   [4 bytes int32]  sender node id
+// ─────────────────────────────────────────────────────────────────────────────
+
+static constexpr char SCAN_PROBE[]  = "MINDMESH_SCAN";
+static constexpr char SCAN_REPLY[]  = "MINDMESH_HERE";
+static constexpr int  SCAN_WAIT_MS  = 2000;
+
+#pragma pack(push,1)
+struct HeartbeatPacket {
+    // Combined score = metric * getSystemHealth() product.
+    // Each member stores the latest value for every peer so the
+    // leader has a full cluster overview for placement decisions.
+    double  heartbeat_score;   // metric * (0.7*cpuHealth + 0.3*ramHealth)
+    double  benchmark_metric;  // raw compute_check result (static per session)
+    int32_t node_id;
+};
+#pragma pack(pop)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §1  QuicTransport
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ALPN for MindMesh QUIC connections.
+static const QUIC_BUFFER MINDMESH_ALPN = {
+    sizeof("mindmesh") - 1,
+    (uint8_t*)"mindmesh"
+};
+
+QuicTransport::QuicTransport() = default;
+
+QuicTransport::~QuicTransport()
+{
+    shutdown();
 }
 
-string NetworkManager::Network::getName() { return name; }
-uint8_t NetworkManager::Network::getUID() { return UID; }
-string NetworkManager::Network::getLeader() { return leadIP; }
+bool QuicTransport::init(const std::string& local_ip)
+{
+    (void)local_ip; // listener binds to INADDR_ANY
 
-void NetworkManager::Network::setName(string newName) { name = newName; }
-void NetworkManager::Network::setLeader(string leader) { leadIP = leader; }
-void NetworkManager::Network::setUID() {
-	long long currentTime = std::chrono::time_point_cast<std::chrono::nanoseconds>(
-            std::chrono::high_resolution_clock::now()
-        ).time_since_epoch().count();
-	if (!(SHA256((const uint8_t*)currentTime, sizeof(currentTime), &netUID)))
-		cout << "Hash of current time (for UID) failed" << endl;
-}
-void NetworkManager::Network::setPassword(string newPassword) {
-	if (password == "")
-		passValid = false;
-	else {
-		if (!(SHA256((const uint8_t*)(c_str(password)), password.length, &passHash)))
-			cout << "Hash of new network's password failed!" << endl; 
-		passValid = true; 
-	}
-}
-
-
-bool NetworkManager::Network::isPass() {
-	if (!passValid)
-		return false;
-	else
-		return true;
-}
-
-// accepts a password hash and compares it to this network
-// returns true if the hashes match
-bool NetworkManager::Network::validatePassword(uint8_t* inputPassHash) {
-	int cmp = SHA256CompareOrder(inputPassHash, passHash);
-	if (cmp == 0)
-		return true; 
-	else 
-		return false;
-}
-
-// constructor, specifies testing mode
-NetworkManager::NetworkManager(bool testing) : currentNet("", "", "") {
-	
-    test = testing;
-
-    nodeState = NONE;
-    hostname = gethostbyname("");
-	localIP = inet_ntoa(*(struct in_addr *)*localHost->h_addr_list); // get this device's IP
-    netInfo = new vector<struct P2PNetInfo>();
-    halting = false;
-
-    NetworkManager(const NetworkManager& obj) = delete; //delete copy constructor
-
-    //startup winsock, this is mandatory so kill if error
-    if (WSAStartup(MAKEWORD(2,2), &wsdata) != 0) {
-        wprintf(L"Issue with WS startup: %d\n", WSAGetLastError());
-        exit(0);
-    }
-	//startup msquic
-	QUIC_STATUS quicStatus = MsQuicOpen2(); //use msquic version 2
-	if (quicStatus == QUIC_FAILED) {
-		cout << "msquic failed to start" << endl;
-		exit(0);
-	}
-	
-}
-
-// internal async method, ran by leaders
-// listens for UDP messages on port 56713; responds with their network info
-// format:  <network-name>|<network-UID>|<leader-ip>|<passFlag>
-// passFlag is either "t" or "f"
-// pipe "|" is used as delimiter
-void NetworkManager::listenForScan() {
-    // IPv4 UDP socket
-    SOCKET scanListener = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (scanListener == INVALID_SOCKET) {
-		wprintf(L"socket failed with error: %ld\n", WSAGetLastError());
-		WSACleanup();
-		exit(0);
-	}
-    struct sockaddr_in listenSpec;
-    listenSpec.sin_family = AF_INET;
-    listenSpec.sin_addr.s_addr = INADDR_ANY; //accept any IP
-    listenSpec.sin_port = htons(56713); //listen on port 56713
-
-	int reqbuflen = 32; // length of recv buffer
-	char reqbuf[reqbuflen]; // holds request message
-	sockaddr requestAddr; // holds request source address
-	int recvResult; // observing how successful receive is
-
-	int sendResult; // observing how successful send operation is
-	int sendbuflen = 128; // length of send buffer
-	char sendbuf[sendbuflen]; // holds message to send
-
-	//network info format: <network-name>|<network-UID>|<leader-IP>|<passFlag>
-	//network-name: name of the network
-	//network-UID: UID of the network
-	//passFlag: whether the network has a password, either "t" for yes or "f" for no
-	//pipe character "|" used as a delimiter; it follows that the delimiter cannot be a part of delimited members
-	string networkInfo = currentNet.getName() + "|" + currentNet.getUID() + "|" + currentNet.getLeader() + "|";
-	if (currentNet.isPass())
-		networkInfo += "t";
-	else
-		networkInfo += "f";
-
-	strcpy(sendbuf, networkInfo.c_str());
-
-	int bindCode = bind(scanListener, (struct sockaddr*)&listenSpec, sizeof(listenSpec));
-
-	if (bindCode == SOCKET_ERROR) {
-		printf("Error binding scan listener socket: %d\n", WSAGetLastError());
-		exit(1);
-	}
-
-    while (!halting && nodeState == LEADER) {
-        // thread will spin around in here, perform one response per iteration
-
-		// receive packet (broadcast from scan function)
-		// note: recvfrom is a blocking method
-		recvResult = recvfrom(scanListener, reqbuf&, reqbuflen, 0, requestAddr&, sizeof(requestAddr));
-
-		// send response
-		sendResult = sendto(scanListener, sendbuf&, sendbuflen, 0, requestAddr&, sizeof(requestAddr));
-
-    }
-    // close UDP socket
-    closesocket(scanListener);
-}
-
-// internal async method
-// leaders will send heartbeat to their followers
-// followers will send metrics to the leader
-// performed over QUIC
-void NetworkManager::sendHeartbeat() {
-    while (!halting) {
-        if (nodeState == LEADER) {
-            //send heartbeat logic
-        }
-        else {
-            //send metrics to leader
-        }
-    }
-}
-
-// launches threads for async member methods
-// does not set node state
-// CANDIDATE state only exists when the async methods are functioning
-void NetworkManager::memberInit() {
-	switch (nodeState) {
-		case LEADER:
-			// launch scan listener
-			thread scan(listenForScan);
-			asyncOps.push_back(scan);
-		case FOLLOWER:
-			// launch heartbeat
-			thread beatSend(sendHeartbeat);
-			asyncOps.push_back(beatSend);
-		default:
-			// does nothing
-			break;
-	}
-}
-
-
-// creates a network with specified name and password
-// password may be null
-// returns true if network successfully created
-bool NetworkManager::createNetwork(string name, string password) {
-	
-	currentNet.setName(name);
-	currentNet.setUID();
-	currentNet.setPassword(password);
-	nodeState = LEADER; // creating node is the leader of network by default
-	memberInit(); // initialize async methods
-
-    return true; //success
-}
-
-// disconnects this device from network
-// returns true when complete
-// returns false if an error was encountered
-bool NetworkManager::leaveNetwork() {
-    try {
-        //perform disconnection logic
-        halting = true;
-
-        //wipe network
-    	currentNet.setName("");
-    	currentNet.setPassword("");
-		nodeState = NONE; 
-        return true;
-    }
-    catch (...) {
+    // Open MSQuic.
+    if (QUIC_FAILED(MsQuicOpen2(&api_))) {
+        std::cerr << "[QuicTransport] MsQuicOpen2 failed\n";
         return false;
     }
-}
 
-// attempts to join network of specified name and password
-// password may be null
-// returns true if success, false if there was an error
-bool NetworkManager::joinNetwork(string name, string UID, string password) {
-    for (struct P2PNetInfo net : netInfo) {
-		if (net.getName() == name) {
-			if (net.getUID() == UID) {
-				// match, send join request
-				
-			}
-		}
-	}
-	return false; //network not found
-}
-
-//scans for networks by broadcasting UDP port 56713
-void NetworkManager::scan() {
-    // initialize UDP socket
-	SOCKET scanner = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-	if (scanner == INVALID_SOCKET) {
-		wprintf(L"socket failed with error: %ld\n", WSAGetLastError());
-		WSACleanup();
-		exit(0);
-	}
-    // specify socket
-	BOOL bOpt = TRUE;
-	int bOptLen = sizeof (BOOL);
-
-	// set socket to broadcast
-	int broadcastSetCode = setsockopt(scanner, SOL_SOCKET, SO_BROADCAST, (char*) &bOpt, bOptLen);
-	if (broadcastSetCode != 0) {
-		wprintf(L"setsockopt for SO_BROADCAST failed with error %u\n", WSAGetLastError());
-		WSACleanup();
-		exit(0);
-	}
-
-	// send broadcast message
-	struct sockaddr_in scanSpec;
-	scanSpec.sin_family = AF_INET;
-	scanSpec.sin_port = htons(56713);
-	scanSpec.sin_addr.s_addr = inet_addr("255.255.255.255"); // broadcast address
-	int sendResult = sendto(scanner, "", 0, 0, scanSpec&, sizeof(scanSpec)); // send empty datagram
-	if (sendResult == SOCKET_ERROR) {
-		wprintf(L"send error: %d\n", WSAGetLastError());
-	}
-
-	int recBufLen = 128;
-	char* recBuf[recBufLen];
-
-	this_thread::sleep_for(chrono::seconds(1));  ; //brief pause to get network responses
-
-
-    // collect responses, populate netInfo vector
-	int bytesReceived;
-	struct P2PNetInfo receivedNet;
-	// this loop technically cannot break since recv is blocking
-	// implement timing mechanism here to force the loop to exit after specified time
-	int maxTimeMS = 2000; // time to pick up networks
-	netInfo = new vector<struct P2PNetInfo>(); // wipe old network list; avoids stale data
-	while ((bytesReceived = recv(scanner, recBuf, recBufLen, 0)) != 0) {
-		netInfo.push_back(new struct P2PNetInfo);
-		//initialize
-		receivedNet = netInfo.get(netInfo.length - 1);
-		receivedNet.name = "";
-		receivedNet.UID = "";
-		receivedNet.leadIP = "";
-		int i = 0; // buffer iterator
-		//name
-		while (recBuf[i] != '|' && recBuf[i] != '\0') {
-			receivedNet.name += recBuf[i];
-		}
-		i++; //skip pipe char
-		//UID
-		while (recBuf[i] != '|' && recBuf[i] != '\0') {
-			receivedNet.UID += recBuf[i];
-		}
-		i++; //skip pipe char
-		//Leader IP
-		while (recBuf[i] != '|' && recBuf[i] != '\0') {
-			receivedNet.leadIP += recBuf[i];
-		}
-		i++;
-		//pass flag
-		if (recBuf[i] == 't')
-			receivedNet.passFlag = true;
-		else
-			receivedNet.passFlag = false;
-
-		// check time; make sure maxTimeMS has not fully elapsed
-	}
-
-}
-
-// runs dynamic metric calculation algorithm
-// metrics sent to leader during heartbeat
-struct SystemHealth NetworkManager::calculateMetrics() {
-    return getSystemHealth();
-}
-
-// fully dismantles network operations for proper shutdown
-// intended to be called when application terminating
-void NetworkManager::cleanup() {
-    // disconnect from current net if applicable
-    bool discSuccess = false;
-    if (currentNet.getName()=="") {
-        discSuccess = leaveNetwork();
-    }
-    else {
-        discSuccess = true;
+    // Registration.
+    QUIC_REGISTRATION_CONFIG reg_cfg = {};
+    reg_cfg.AppName    = "MindMesh";
+    reg_cfg.ExecutionProfile = QUIC_EXECUTION_PROFILE_LOW_LATENCY;
+    if (QUIC_FAILED(api_->RegistrationOpen(&reg_cfg, &reg_))) {
+        std::cerr << "[QuicTransport] RegistrationOpen failed\n";
+        return false;
     }
 
-    // cleanup networks
-    int success = WSACleanup();
-	MsQuicClose();
+    // Configuration (no TLS cert for now — use QUIC_CREDENTIAL_FLAG_NO_CERTIFICATE_VALIDATION
+    // in test environments; replace with a real cert for production).
+    QUIC_SETTINGS settings = {};
+    settings.IdleTimeoutMs              = 30000;
+    settings.IsSet.IdleTimeoutMs        = 1;
+    settings.PeerBidiStreamCount        = 16;
+    settings.IsSet.PeerBidiStreamCount  = 1;
 
-    if (test) {
-        // print captured issues to terminal
-        if (!discSuccess)
-            cout << "issues encountered disconnecting from network" << endl;
-        if (success != 0)
-            cout << "issues encountered cleaning up winsock.dll" << endl;
+    if (QUIC_FAILED(api_->ConfigurationOpen(
+            reg_, &MINDMESH_ALPN, 1,
+            &settings, sizeof(settings),
+            nullptr, &config_))) {
+        std::cerr << "[QuicTransport] ConfigurationOpen failed\n";
+        return false;
     }
+
+    QUIC_CREDENTIAL_CONFIG cred_cfg = {};
+    cred_cfg.Type  = QUIC_CREDENTIAL_TYPE_NONE;
+    cred_cfg.Flags = QUIC_CREDENTIAL_FLAG_CLIENT |
+                     QUIC_CREDENTIAL_FLAG_NO_CERTIFICATE_VALIDATION;
+    if (QUIC_FAILED(api_->ConfigurationLoadCredential(config_, &cred_cfg))) {
+        std::cerr << "[QuicTransport] ConfigurationLoadCredential failed\n";
+        return false;
+    }
+
+    // Listener on QUIC_DATA_PORT.
+    if (QUIC_FAILED(api_->ListenerOpen(reg_, listener_cb, this, &listener_))) {
+        std::cerr << "[QuicTransport] ListenerOpen failed\n";
+        return false;
+    }
+
+    QUIC_ADDR addr = {};
+    QuicAddrSetFamily(&addr, QUIC_ADDRESS_FAMILY_INET);
+    QuicAddrSetPort(&addr, static_cast<uint16_t>(QUIC_DATA_PORT));
+
+    if (QUIC_FAILED(api_->ListenerStart(listener_, &MINDMESH_ALPN, 1, &addr))) {
+        std::cerr << "[QuicTransport] ListenerStart failed\n";
+        return false;
+    }
+
+    ready_ = true;
+    std::cout << "[QuicTransport] Listening on UDP port " << QUIC_DATA_PORT << "\n";
+    return true;
 }
 
-// used to initialize NetworkManager as a singleton
-// testing parameter used to put the network manager in testing mode
-// after initialization this cannot be changed.
-static NetworkManager* NetworkManager::getNetworkManager(bool testing) {
-    if (netmgr == nullptr) {
-        lock_guard<mutex> lock(mtx);
-        if (netmgr == nullptr) {
-            netmgr = new NetworkManager(testing);
+// Called by NetworkManager after both quic_ and raft_ are constructed
+// to wire incoming heartbeat packets into the Raft engine.
+// Defined here so it has access to the HeartbeatPacket type.
+void NetworkManager::wireHeartbeatReceiver()
+{
+    quic_->set_recv_callback(
+        [this](const std::string& from, const uint8_t* data, size_t len)
+        {
+            if (len < sizeof(HeartbeatPacket)) return;
+            HeartbeatPacket pkt;
+            memcpy(&pkt, data, sizeof(pkt));
+            if (!raft_) return;
+            // Forward both scores into the Raft engine so it maintains
+            // a full per-node table (benchmark + live heartbeat score).
+            raft_->on_heartbeat_received(pkt.node_id,
+                                         pkt.heartbeat_score,
+                                         pkt.benchmark_metric,
+                                         0 /* seq — NuRaft handles ordering */);
+        });
+}
+
+void QuicTransport::shutdown()
+{
+    if (!ready_) return;
+    ready_ = false;
+    if (listener_ && api_) api_->ListenerClose(listener_);
+    if (config_   && api_) api_->ConfigurationClose(config_);
+    if (reg_      && api_) api_->RegistrationClose(reg_);
+    if (api_)              MsQuicClose(api_);
+    listener_ = config_ = reg_ = nullptr;
+    api_ = nullptr;
+}
+
+bool QuicTransport::send(const std::string& endpoint,
+                         const uint8_t*    data,
+                         size_t            len)
+{
+    if (!ready_) return false;
+
+    // Parse "ip:port".
+    auto colon = endpoint.rfind(':');
+    std::string ip   = (colon != std::string::npos)
+                     ? endpoint.substr(0, colon) : endpoint;
+    uint16_t    port = (colon != std::string::npos)
+                     ? static_cast<uint16_t>(std::stoi(endpoint.substr(colon+1)))
+                     : static_cast<uint16_t>(QUIC_DATA_PORT);
+
+    // Open a short-lived connection, send on stream 0, close.
+    // For heartbeats and small messages this is acceptable; the transfer
+    // engine will hold connections open for large bundles.
+    HQUIC conn = nullptr;
+    if (QUIC_FAILED(api_->ConnectionOpen(reg_, conn_cb, this, &conn)))
+        return false;
+
+    QUIC_ADDR peer = {};
+    QuicAddrSetFamily(&peer, QUIC_ADDRESS_FAMILY_INET);
+    QuicAddrSetPort(&peer, port);
+    inet_pton(AF_INET, ip.c_str(),
+              &reinterpret_cast<SOCKADDR_IN*>(&peer)->sin_addr);
+
+    if (QUIC_FAILED(api_->ConnectionStart(conn, config_,
+                                           QUIC_ADDRESS_FAMILY_INET,
+                                           ip.c_str(), port))) {
+        api_->ConnectionClose(conn);
+        return false;
+    }
+
+    HQUIC stream = nullptr;
+    if (QUIC_FAILED(api_->StreamOpen(conn,
+                                      QUIC_STREAM_OPEN_FLAG_NONE,
+                                      stream_cb, this, &stream))) {
+        api_->ConnectionClose(conn);
+        return false;
+    }
+
+    if (QUIC_FAILED(api_->StreamStart(stream, QUIC_STREAM_START_FLAG_NONE))) {
+        api_->StreamClose(stream);
+        api_->ConnectionClose(conn);
+        return false;
+    }
+
+    // Copy data into a QUIC buffer and send.
+    uint8_t* buf_data = new uint8_t[len];
+    memcpy(buf_data, data, len);
+
+    QUIC_BUFFER qbuf;
+    qbuf.Buffer = buf_data;
+    qbuf.Length = static_cast<uint32_t>(len);
+
+    QUIC_STATUS st = api_->StreamSend(stream, &qbuf, 1,
+                                       QUIC_SEND_FLAG_FIN, buf_data);
+    if (QUIC_FAILED(st)) {
+        delete[] buf_data;
+        api_->StreamClose(stream);
+        api_->ConnectionClose(conn);
+        return false;
+    }
+    // buf_data freed in stream_cb SEND_COMPLETE event.
+    return true;
+}
+
+void QuicTransport::set_recv_callback(RecvCallback cb)
+{
+    std::lock_guard<std::mutex> lk(cb_mtx_);
+    recv_cb_ = std::move(cb);
+}
+
+// ── MSQuic static callbacks ───────────────────────────────────────────────────
+
+QUIC_STATUS QUIC_API QuicTransport::listener_cb(
+        HQUIC, void* ctx, QUIC_LISTENER_EVENT* ev)
+{
+    auto* self = static_cast<QuicTransport*>(ctx);
+    if (ev->Type == QUIC_LISTENER_EVENT_NEW_CONNECTION) {
+        self->api_->SetCallbackHandler(
+            ev->NEW_CONNECTION.Connection, (void*)conn_cb, self);
+        return self->api_->ConnectionSetConfiguration(
+            ev->NEW_CONNECTION.Connection, self->config_);
+    }
+    return QUIC_STATUS_SUCCESS;
+}
+
+QUIC_STATUS QUIC_API QuicTransport::conn_cb(
+        HQUIC conn, void* ctx, QUIC_CONNECTION_EVENT* ev)
+{
+    auto* self = static_cast<QuicTransport*>(ctx);
+    switch (ev->Type) {
+    case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
+        self->api_->SetCallbackHandler(
+            ev->PEER_STREAM_STARTED.Stream, (void*)stream_cb, self);
+        break;
+    case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+        self->api_->ConnectionClose(conn);
+        break;
+    default: break;
+    }
+    return QUIC_STATUS_SUCCESS;
+}
+
+QUIC_STATUS QUIC_API QuicTransport::stream_cb(
+        HQUIC stream, void* ctx, QUIC_STREAM_EVENT* ev)
+{
+    auto* self = static_cast<QuicTransport*>(ctx);
+    switch (ev->Type) {
+    case QUIC_STREAM_EVENT_RECEIVE: {
+        // Collect received buffers and fire the callback.
+        std::string from = "unknown";  // TODO: extract peer addr from conn context
+        std::lock_guard<std::mutex> lk(self->cb_mtx_);
+        if (self->recv_cb_) {
+            for (uint32_t i = 0; i < ev->RECEIVE.BufferCount; ++i) {
+                self->recv_cb_(from,
+                               ev->RECEIVE.Buffers[i].Buffer,
+                               ev->RECEIVE.Buffers[i].Length);
+            }
         }
+        break;
     }
-    return netmgr;
+    case QUIC_STREAM_EVENT_SEND_COMPLETE:
+        // Free the buffer we allocated in send().
+        delete[] static_cast<uint8_t*>(ev->SEND_COMPLETE.ClientContext);
+        break;
+    case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
+        self->api_->StreamClose(stream);
+        break;
+    default: break;
+    }
+    return QUIC_STATUS_SUCCESS;
 }
 
-vector<struct P2PNetInfo> NetworkManager::getNetworkInfo() { return netInfo; }
+// ─────────────────────────────────────────────────────────────────────────────
+// §2  NetworkManager
+// ─────────────────────────────────────────────────────────────────────────────
+
+NetworkManager& NetworkManager::getInstance()
+{
+    static NetworkManager instance;
+    return instance;
+}
+
+bool NetworkManager::init()
+{
+    // Initialise Winsock for UDP scan.
+    WSADATA wsd;
+    WSAStartup(MAKEWORD(2, 2), &wsd);
+
+    // Resolve local IP (first non-loopback IPv4).
+    char hostname[256] = {};
+    gethostname(hostname, sizeof(hostname));
+
+    addrinfo hints = {}, *res = nullptr;
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(hostname, nullptr, &hints, &res) == 0 && res) {
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET,
+                  &reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr,
+                  ip, sizeof(ip));
+        local_ip_ = ip;
+        LOCAL_NODE_IP = ip;
+        freeaddrinfo(res);
+    } else {
+        local_ip_ = "127.0.0.1";
+        LOCAL_NODE_IP = "127.0.0.1";
+    }
+
+    // Compute and store capacity weight (normalised from benchmark metric).
+    // We clamp to (0, 1] — a score of 0 means the node is unsuitable.
+    if (metric > 0.0)
+        NODE_CAPACITY_WEIGHT = std::min(1.0, metric / 1'000'000.0);
+    else
+        NODE_CAPACITY_WEIGHT = 0.0;
+
+    // Start MSQuic transport.
+    quic_ = std::make_unique<QuicTransport>();
+    if (!quic_->init(local_ip_)) {
+        std::cerr << "[Network] QuicTransport init failed\n";
+        return false;
+    }
+
+    std::cout << "[Network] Local IP: " << local_ip_ << "\n";
+    return true;
+}
+
+// ── CREATE ────────────────────────────────────────────────────────────────────
+
+bool NetworkManager::createNetwork(const std::string& name,
+                                   const std::string& password)
+{
+    std::lock_guard<std::mutex> lk(state_mtx_);
+    if (connected_) {
+        std::cerr << "[Network] Already connected. Disconnect first.\n";
+        return false;
+    }
+
+    network_name_     = name;
+    network_password_ = password;
+
+    LOCAL_RAFT_NODE_ID  = 1;
+    LOCAL_RAFT_ENDPOINT = local_ip_ + ":" + std::to_string(RAFT_PORT);
+
+    // Single-node cluster — self is both leader and only member.
+    std::unordered_map<int, std::string> endpoints = {
+        { 1, LOCAL_RAFT_ENDPOINT }
+    };
+    std::unordered_map<int, std::string> ips = {
+        { 1, local_ip_ }
+    };
+
+    raft_ = std::make_shared<dist::RaftDistribution>(*quic_, endpoints, ips);
+    raft_->start();
+    wireHeartbeatReceiver();
+
+    connected_ = true;
+    stopping_  = false;
+
+    heartbeat_thread_     = std::thread(&NetworkManager::heartbeatLoop,    this);
+    scan_listener_thread_ = std::thread(&NetworkManager::scanListenerLoop,  this);
+
+    std::cout << "[Network] Created network '" << name << "' — you are leader.\n";
+    return true;
+}
+
+// ── SCAN ──────────────────────────────────────────────────────────────────────
+
+std::vector<ScanResult> NetworkManager::scan()
+{
+    std::vector<ScanResult> results;
+
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) return results;
+
+    BOOL bcast = TRUE;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST,
+               reinterpret_cast<char*>(&bcast), sizeof(bcast));
+
+    DWORD timeout_ms = SCAN_WAIT_MS / 4;  // per-recv timeout
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<char*>(&timeout_ms), sizeof(timeout_ms));
+
+    sockaddr_in dest = {};
+    dest.sin_family      = AF_INET;
+    dest.sin_port        = htons(static_cast<u_short>(SCAN_UDP_PORT));
+    dest.sin_addr.s_addr = INADDR_BROADCAST;
+
+    sendto(sock, SCAN_PROBE, static_cast<int>(strlen(SCAN_PROBE)) + 1, 0,
+           reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+
+    auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(SCAN_WAIT_MS);
+
+    char buf[512];
+    sockaddr_in from = {};
+    int from_len = sizeof(from);
+
+    while (std::chrono::steady_clock::now() < deadline) {
+        int n = recvfrom(sock, buf, sizeof(buf) - 1, 0,
+                         reinterpret_cast<sockaddr*>(&from), &from_len);
+        if (n <= 0) continue;
+        buf[n] = '\0';
+
+        if (strncmp(buf, SCAN_REPLY, strlen(SCAN_REPLY)) != 0) continue;
+
+        // Parse "MINDMESH_HERE name=<name> pw=<0|1>"
+        ScanResult sr;
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
+        sr.leader_ip = ip;
+
+        char* p = buf + strlen(SCAN_REPLY);
+        char* name_tag = strstr(p, "name=");
+        char* pw_tag   = strstr(p, "pw=");
+        if (name_tag) {
+            name_tag += 5;
+            char* sp = strchr(name_tag, ' ');
+            sr.name = sp ? std::string(name_tag, sp) : std::string(name_tag);
+        }
+        if (pw_tag) {
+            sr.has_password = (pw_tag[3] == '1');
+        }
+
+        // Deduplicate by leader_ip.
+        bool dup = false;
+        for (auto& r : results)
+            if (r.leader_ip == sr.leader_ip) { dup = true; break; }
+        if (!dup) results.push_back(std::move(sr));
+    }
+
+    closesocket(sock);
+    return results;
+}
+
+// ── JOIN ──────────────────────────────────────────────────────────────────────
+
+bool NetworkManager::joinNetwork(const std::string& leader_ip,
+                                  const std::string& network_name,
+                                  const std::string& password)
+{
+    std::lock_guard<std::mutex> lk(state_mtx_);
+    if (connected_) {
+        std::cerr << "[Network] Already connected. Disconnect first.\n";
+        return false;
+    }
+
+    // TODO: authenticate password with leader over QUIC before proceeding.
+    // For now we trust the caller has verified the password via CLI.
+    (void)password;
+
+    network_name_ = network_name;
+
+    // Assign a node ID — in the full implementation the leader assigns this
+    // and sends it back over QUIC.  For now we use a client-side increment.
+    LOCAL_RAFT_NODE_ID  = 2;  // TODO: receive from leader
+    LOCAL_RAFT_ENDPOINT = local_ip_ + ":" + std::to_string(RAFT_PORT);
+
+    std::unordered_map<int, std::string> endpoints = {
+        { 1, leader_ip + ":" + std::to_string(RAFT_PORT) },
+        { LOCAL_RAFT_NODE_ID, LOCAL_RAFT_ENDPOINT }
+    };
+    std::unordered_map<int, std::string> ips = {
+        { 1, leader_ip },
+        { LOCAL_RAFT_NODE_ID, local_ip_ }
+    };
+
+    raft_ = std::make_shared<dist::RaftDistribution>(*quic_, endpoints, ips);
+    raft_->start();
+    wireHeartbeatReceiver();
+
+    connected_ = true;
+    stopping_  = false;
+
+    heartbeat_thread_     = std::thread(&NetworkManager::heartbeatLoop,    this);
+    scan_listener_thread_ = std::thread(&NetworkManager::scanListenerLoop,  this);
+
+    std::cout << "[Network] Joined network '" << network_name
+              << "' via " << leader_ip << "\n";
+    return true;
+}
+
+// ── HEARTBEAT LOOP ────────────────────────────────────────────────────────────
+
+void NetworkManager::heartbeatLoop()
+{
+    // Heartbeat interval per specification: 200 ms.
+    constexpr auto INTERVAL = std::chrono::milliseconds(200);
+
+    while (!stopping_) {
+        auto next = std::chrono::steady_clock::now() + INTERVAL;
+
+        if (connected_ && raft_) {
+            // Build heartbeat packet.
+            HeartbeatPacket pkt;
+            SystemHealth sh = getSystemHealth();
+            // Remaining performance = weighted health composite.
+            double remaining = 0.7 * sh.cpuHealth + 0.3 * sh.ramHealth;
+            // Piggybacked score = benchmark_metric * remaining_perf.
+            // This single value captures both hardware capability and
+            // current load, and is what peers use for placement decisions.
+            pkt.heartbeat_score  = metric * remaining;
+            pkt.benchmark_metric = metric;
+            pkt.node_id          = LOCAL_RAFT_NODE_ID;
+
+            // Update our own entry in the Raft engine with the combined score.
+            raft_->update_local_metric(pkt.heartbeat_score);
+
+            // Broadcast to all known peers via QUIC.
+            // RaftDistribution::node_snapshot() returns all known nodes.
+            auto snapshot = raft_->node_snapshot();
+            for (auto& [id, info] : snapshot) {
+                if (id == LOCAL_RAFT_NODE_ID) continue;
+                std::string ep = info.ip + ":" + std::to_string(QUIC_DATA_PORT);
+                quic_->send(ep,
+                            reinterpret_cast<const uint8_t*>(&pkt),
+                            sizeof(pkt));
+            }
+        }
+
+        std::this_thread::sleep_until(next);
+    }
+}
+
+// ── UDP SCAN RESPONDER ────────────────────────────────────────────────────────
+
+void NetworkManager::scanListenerLoop()
+{
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) return;
+
+    // Allow port reuse so multiple apps on the same machine can coexist.
+    BOOL reuse = TRUE;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+               reinterpret_cast<char*>(&reuse), sizeof(reuse));
+
+    sockaddr_in addr = {};
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(static_cast<u_short>(SCAN_UDP_PORT));
+    addr.sin_addr.s_addr = INADDR_ANY;
+    bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+
+    DWORD timeout_ms = 500;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<char*>(&timeout_ms), sizeof(timeout_ms));
+
+    char buf[256];
+    sockaddr_in from = {};
+    int from_len = sizeof(from);
+
+    while (!stopping_) {
+        int n = recvfrom(sock, buf, sizeof(buf) - 1, 0,
+                         reinterpret_cast<sockaddr*>(&from), &from_len);
+        if (n <= 0) continue;
+        buf[n] = '\0';
+
+        if (strcmp(buf, SCAN_PROBE) != 0) continue;
+
+        // Respond with our network info.
+        char reply[256];
+        snprintf(reply, sizeof(reply),
+                 "%s name=%s pw=%d",
+                 SCAN_REPLY,
+                 network_name_.c_str(),
+                 network_password_.empty() ? 0 : 1);
+
+        sendto(sock, reply, static_cast<int>(strlen(reply)) + 1, 0,
+               reinterpret_cast<sockaddr*>(&from), from_len);
+    }
+
+    closesocket(sock);
+}
+
+// ── STATUS / LEADER / DISCONNECT ─────────────────────────────────────────────
+
+std::string NetworkManager::statusString() const
+{
+    if (!connected_) return "Not connected to any network.";
+
+    std::ostringstream os;
+    os << "Network     : " << network_name_ << "\n"
+       << "Connected   : Yes\n"
+       << "Role        : " << (isLeader() ? "Leader" : "Follower") << "\n"
+       << "Node ID     : " << LOCAL_RAFT_NODE_ID << "\n"
+       << "Local IP    : " << local_ip_ << "\n"
+       << "Metric      : " << metric << "\n"
+       << "Capacity    : " << NODE_CAPACITY_WEIGHT;
+    return os.str();
+}
+
+std::string NetworkManager::leaderIp() const
+{
+    if (!connected_ || !raft_) return "";
+    int lid = raft_->leader_id();
+    if (lid < 0) return "election in progress";
+    auto snap = raft_->node_snapshot();
+    auto it = snap.find(lid);
+    return (it != snap.end()) ? it->second.ip : "";
+}
+
+bool NetworkManager::isConnected() const { return connected_; }
+
+bool NetworkManager::isLeader() const
+{
+    if (!connected_ || !raft_) return false;
+    return raft_->is_leader();
+}
+
+bool NetworkManager::disconnect()
+{
+    stopping_ = true;
+    if (heartbeat_thread_.joinable())     heartbeat_thread_.join();
+    if (scan_listener_thread_.joinable()) scan_listener_thread_.join();
+
+    if (raft_) { raft_->stop(); raft_.reset(); }
+
+    connected_ = false;
+    network_name_.clear();
+    network_password_.clear();
+
+    std::cout << "[Network] Disconnected.\n";
+    return true;
+}
+
+void NetworkManager::cleanup()
+{
+    if (connected_) disconnect();
+    if (quic_)      quic_->shutdown();
+    WSACleanup();
+}
+
+// ── OFFLOAD INTEGRATION ───────────────────────────────────────────────────────
+
+std::string NetworkManager::requestOffload(const std::string& process_id)
+{
+    if (!connected_ || !raft_) return "";
+    return raft_->request_offload(process_id);
+}
