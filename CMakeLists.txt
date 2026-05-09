@@ -6,42 +6,36 @@ set(CMAKE_CXX_STANDARD 20)
 
 # ============================================================
 # TOOLCHAIN GUARD
+# This project requires MSVC (SEH, __declspec, Windows SDK).
+# Build from any MSVC environment:
+#   - "x64 Native Tools Command Prompt for VS 20xx"
+#   - cmake -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
 # ============================================================
 if (NOT MSVC)
     message(FATAL_ERROR
             "This project requires MSVC.\n"
-            "In CLion: Settings -> Build, Execution, Deployment\n"
-            "          -> Toolchains -> select Visual Studio.\n"
-            "MinGW and Clang are not supported.")
+            "MinGW and Clang are not supported.\n"
+            "Run from an MSVC environment:\n"
+            "  cmake -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl ..")
 endif()
 
 # ============================================================
-# MSQuic — compiled in-repo using build.ps1 with -Tls openssl.
-# Headers and lib are relative to the project root.
-# Adjust MSQUIC_ROOT if your repo layout differs.
+# MSQuic — compiled in-repo with build.ps1 -Tls openssl
+# Override with: cmake -DMSQUIC_ROOT=<path>
 # ============================================================
 set(MSQUIC_ROOT "${CMAKE_SOURCE_DIR}/msquic"
         CACHE PATH "Root of the in-repo MSQuic build")
 
-# Headers ship with the MSQuic source.
 set(MSQUIC_INCLUDE "${MSQUIC_ROOT}/src/inc")
-
-# The Ninja/MSVC build outputs to artifacts/bin/... — pick the
-# config that matches CMAKE_BUILD_TYPE.
-set(MSQUIC_LIB
-        "${MSQUIC_ROOT}/artifacts/bin/windows/x64_Debug_openssl/msquic.lib")
-
-# Also need the DLL next to the exe at runtime.
-set(MSQUIC_DLL
-        "${MSQUIC_ROOT}/artifacts/bin/windows/x64_Debug_openssl/msquic.dll")
+set(MSQUIC_LIB     "${MSQUIC_ROOT}/artifacts/bin/windows/x64_Debug_openssl/msquic.lib")
+set(MSQUIC_DLL     "${MSQUIC_ROOT}/artifacts/bin/windows/x64_Debug_openssl/msquic.dll")
 
 if (NOT EXISTS "${MSQUIC_INCLUDE}/msquic.h")
     message(WARNING
-            "MSQuic headers not found at ${MSQUIC_INCLUDE}.\n"
-            "Run build.ps1 -Tls openssl inside the msquic/ subdirectory first.")
+            "MSQuic headers not found at ${MSQUIC_INCLUDE}\n"
+            "Run: cd msquic && .\\build.ps1 -Tls openssl")
 endif()
 
-# Copy msquic.dll next to every executable that needs it.
 function(copy_msquic_dll TARGET)
     add_custom_command(TARGET ${TARGET} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -50,32 +44,22 @@ function(copy_msquic_dll TARGET)
 endfunction()
 
 # ============================================================
-# NuRaft — pre-installed or fetched.
-# Uncomment FetchContent block when ready to pull automatically.
+# NuRaft — compiled in-repo
+# Override with: cmake -DNURAFT_ROOT=<path>
 # ============================================================
-# include(FetchContent)
-# FetchContent_Declare(NuRaft
-#     GIT_REPOSITORY https://github.com/eBay/NuRaft.git
-#     GIT_TAG        master)
-# FetchContent_MakeAvailable(NuRaft)
-
-# NuRaft — in-repo build (sibling directory to msquic).
 set(NURAFT_ROOT "${CMAKE_SOURCE_DIR}/NuRaft"
         CACHE PATH "Root of the in-repo NuRaft build")
-# Headers: NuRaft keeps them under include/libnuraft/
+
 set(NURAFT_INCLUDE "${NURAFT_ROOT}/include")
-# Lib: produced as nuraft.lib (not libnuraft.lib) by the MSVC build.
-set(NURAFT_LIB    "${NURAFT_ROOT}/build/nuraft.lib")
-# Asio ships bundled with NuRaft — header-only, no separate build needed.
-set(NURAFT_ASIO   "${NURAFT_ROOT}/asio/include")
+set(NURAFT_LIB     "${NURAFT_ROOT}/build/nuraft.lib")
+set(NURAFT_ASIO    "${NURAFT_ROOT}/asio/include")
 
 if (NOT EXISTS "${NURAFT_INCLUDE}/libnuraft/nuraft.hxx")
     message(WARNING
-            "NuRaft headers not found at ${NURAFT_INCLUDE}.\n"
-            "Run cmake + build inside NuRaft/ first.")
+            "NuRaft headers not found at ${NURAFT_INCLUDE}\n"
+            "Run cmake + build inside NuRaft/")
 endif()
 
-# Helper: apply NuRaft includes/libs to a target.
 function(link_nuraft TARGET)
     target_include_directories(${TARGET} PRIVATE
             "${NURAFT_INCLUDE}"
@@ -84,25 +68,42 @@ function(link_nuraft TARGET)
 endfunction()
 
 # ============================================================
-# /EHa — async SEH for hook.c; applied per-target only.
+# Find mt.exe for UAC manifest embedding (install_hook only)
 # ============================================================
+find_program(MT_EXE mt.exe
+        HINTS
+        "$ENV{WindowsSdkVerBinPath}x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/x64")
+
+if (NOT MT_EXE)
+    message(WARNING "mt.exe not found — UAC manifest will not be embedded in install_hook.exe")
+endif()
+
+# ============================================================
+# Shared compile options applied to all MindMesh targets.
+# WIN32_LEAN_AND_MEAN + NOMINMAX prevent Windows header collisions.
+# /FI force-includes the PCH before any source line so winsock2.h
+# always precedes windows.h regardless of individual file order.
+# ============================================================
+set(MINDMESH_COMPILE_DEFS WIN32_LEAN_AND_MEAN NOMINMAX)
+set(MINDMESH_PCH_FLAG /FI${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp)
 
 # ============================================================
 # hook.dll
+# Core interceptor: IAT patch, process queue, OS filter, logging.
+# Compiled as C (not C++) — set explicitly so MSVC agrees.
 # ============================================================
 add_library(hook SHARED hook.c)
 set_source_files_properties(hook.c PROPERTIES LANGUAGE C)
-target_compile_options(hook PRIVATE /EHa)
+target_compile_options(hook PRIVATE /EHa)   # SEH support for __try/__except
 target_link_libraries(hook PRIVATE kernel32 psapi)
 
 # ============================================================
 # offload_hook.dll
-# Loader: wires AskEngine (live) + TransferEngine (stub) into hook.dll.
-# Now includes Network.cpp + supporting files so AskEngine can
-# call NetworkManager::requestOffload().
-#
-# LINK TransferEngine: when bundle transfer is ready, also add
-#   transfer_engine.cpp and link ws2_32 psapi.
+# Loader: wires AskEngine + TransferEngine into hook.dll.
+# AskEngine is live (calls NetworkManager::requestOffload).
+# TransferEngine is NULL for demo — see Offload_Hook.cpp LINK comment.
 # ============================================================
 add_library(offload_hook SHARED
         Offload_Hook.cpp
@@ -111,65 +112,47 @@ add_library(offload_hook SHARED
         compute_check.cpp
         global.cpp
 )
-target_include_directories(offload_hook PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_INCLUDE}" "${NURAFT_ASIO}")
-# Prevent windows.h min/max macros from breaking NuRaft and std:: usage
-target_compile_definitions(offload_hook PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_compile_options(offload_hook PRIVATE
-        /FI${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp)
-target_link_libraries(offload_hook PRIVATE
-        kernel32
-        ws2_32
-        advapi32
-        "${MSQUIC_LIB}"
-)
+target_include_directories(offload_hook PRIVATE
+        "${MSQUIC_INCLUDE}"
+        "${NURAFT_INCLUDE}"
+        "${NURAFT_ASIO}")
+target_compile_definitions(offload_hook PRIVATE ${MINDMESH_COMPILE_DEFS})
+target_compile_options(offload_hook PRIVATE ${MINDMESH_PCH_FLAG})
+target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 "${MSQUIC_LIB}")
 copy_msquic_dll(offload_hook)
 link_nuraft(offload_hook)
 
 # ============================================================
 # install_hook.exe
+# Writes/clears AppInit_DLLs registry keys (requires Administrator).
+# UAC elevation requested via embedded manifest.
 # ============================================================
 add_executable(install_hook install_hook.cpp)
 target_link_libraries(install_hook PRIVATE advapi32)
 add_dependencies(install_hook hook offload_hook)
 
-set_target_properties(install_hook PROPERTIES VS_USER_PROPS "")
+# Manifest is embedded post-build via mt.exe (works with Ninja + MSVC).
 target_sources(install_hook PRIVATE install_hook.manifest)
 set_source_files_properties(install_hook.manifest PROPERTIES
         COMPILE_FLAGS "" HEADER_FILE_ONLY TRUE)
 
-if (NOT CMAKE_GENERATOR MATCHES "Visual Studio")
-    find_program(MT_EXE mt.exe
-            HINTS
-            "$ENV{WindowsSdkVerBinPath}x64"
-            "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
-            "C:/Program Files (x86)/Windows Kits/10/bin/x64")
-    if (MT_EXE)
-        add_custom_command(TARGET install_hook POST_BUILD
-                COMMAND "${MT_EXE}"
-                -manifest "${CMAKE_CURRENT_SOURCE_DIR}/install_hook.manifest"
-                "-outputresource:$<TARGET_FILE:install_hook>;1"
-                COMMENT "Embedding UAC manifest into install_hook.exe")
-    else()
-        message(WARNING "mt.exe not found — UAC manifest not embedded.")
-    endif()
+if (MT_EXE)
+    add_custom_command(TARGET install_hook POST_BUILD
+            COMMAND "${MT_EXE}"
+            -manifest "${CMAKE_CURRENT_SOURCE_DIR}/install_hook.manifest"
+            "-outputresource:$<TARGET_FILE:install_hook>;1"
+            COMMENT "Embedding UAC manifest into install_hook.exe")
 endif()
 
 # ============================================================
 # test_runner.exe
+# Loads offload_hook.dll, wires stub engines, launches test processes.
 # ============================================================
 add_executable(test_runner Hook_Test.cpp)
 target_link_libraries(test_runner PRIVATE kernel32)
 add_dependencies(test_runner hook offload_hook)
 
-# ============================================================
-# remote_agent.exe  (uncomment when remote_agent.cpp is added)
-# ============================================================
-# add_executable(remote_agent remote_agent.cpp)
-# target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
-
-# ============================================================
-# POST-BUILD: copy DLLs next to executables
-# ============================================================
+# Copy hook + offload_hook DLLs next to each exe that needs them.
 foreach(TARGET_EXE test_runner install_hook)
     add_custom_command(TARGET ${TARGET_EXE} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -180,7 +163,15 @@ foreach(TARGET_EXE test_runner install_hook)
 endforeach()
 
 # ============================================================
-# MindMesh — main application (CLI + full network stack)
+# remote_agent.exe
+# Receives offloaded process bundles on target nodes.
+# Uncomment when remote_agent.cpp is added to the project.
+# ============================================================
+# add_executable(remote_agent remote_agent.cpp)
+# target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
+
+# ============================================================
+# MindMesh.exe — main CLI application
 # ============================================================
 add_executable(MindMesh
         HiveMindCLI.cpp
@@ -190,11 +181,12 @@ add_executable(MindMesh
         network.cpp
         Raft_Engine.cpp
 )
-target_include_directories(MindMesh PRIVATE "${MSQUIC_INCLUDE}" "${NURAFT_INCLUDE}" "${NURAFT_ASIO}")
-target_compile_definitions(MindMesh PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-# Force-include the PCH so winsock2.h always precedes windows.h in every TU
-target_compile_options(MindMesh PRIVATE
-        /FI${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp)
+target_include_directories(MindMesh PRIVATE
+        "${MSQUIC_INCLUDE}"
+        "${NURAFT_INCLUDE}"
+        "${NURAFT_ASIO}")
+target_compile_definitions(MindMesh PRIVATE ${MINDMESH_COMPILE_DEFS})
+target_compile_options(MindMesh PRIVATE ${MINDMESH_PCH_FLAG})
 target_link_libraries(MindMesh PRIVATE
         kernel32
         ws2_32
@@ -204,3 +196,17 @@ target_link_libraries(MindMesh PRIVATE
 )
 copy_msquic_dll(MindMesh)
 link_nuraft(MindMesh)
+
+# ============================================================
+# matrix_tests — standalone benchmark runner
+# Requires a trivial main() in matrix_test_main.cpp:
+#   #include "compute_check.hpp"
+#   #include "global.hpp"
+#   #include <cstdio>
+#   double metric = 0.0; int LOCAL_RAFT_NODE_ID = 1;
+#   double NODE_CAPACITY_WEIGHT = 1.0;
+#   const char* LOCAL_RAFT_ENDPOINT_C = "";
+#   const char* LOCAL_NODE_IP_C = "";
+#   int main() { printf("metric = %f\n", metric_calculation()); }
+# ============================================================
+# add_executable(matrix_tests compute_check.cpp matrix_test_main.cpp)
