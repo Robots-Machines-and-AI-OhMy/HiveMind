@@ -4,6 +4,8 @@ project(HiveMind)
 
 set(CMAKE_CXX_STANDARD 20)
 
+find_package(OpenMP REQUIRED)
+
 # ============================================================
 # tiny-sha (SHA hashing library)
 # ============================================================
@@ -129,6 +131,7 @@ add_library(offload_hook SHARED
         network.cpp
         Raft_Engine.cpp
         compute_check.cpp
+        matrix_funcs.cpp
         Calculate_Performance.cpp
         global.cpp
 )
@@ -138,7 +141,7 @@ target_include_directories(offload_hook PRIVATE
         "${NURAFT_ASIO}")
 target_compile_definitions(offload_hook PRIVATE ${HiveMind_COMPILE_DEFS})
 target_compile_options(offload_hook PRIVATE ${HiveMind_PCH_FLAG})
-target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh psapi "${MSQUIC_LIB}" tiny_sha)
+target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh psapi "${MSQUIC_LIB}" tiny_sha OpenMP::OpenMP_CXX)
 copy_msquic_dll(offload_hook)
 link_nuraft(offload_hook)
 
@@ -198,6 +201,7 @@ target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
 add_executable(HiveMind
         HiveMindCLI.cpp
         compute_check.cpp
+        matrix_funcs.cpp
         Calculate_Performance.cpp
         global.cpp
         network.cpp
@@ -216,6 +220,7 @@ target_link_libraries(HiveMind PRIVATE
         pdh
         "${MSQUIC_LIB}"
         tiny_sha
+        OpenMP::OpenMP_CXX
 )
 copy_msquic_dll(HiveMind)
 link_nuraft(HiveMind)
@@ -233,3 +238,35 @@ link_nuraft(HiveMind)
 #   int main() { printf("metric = %f\n", metric_calculation()); }
 # ============================================================
 # add_executable(matrix_tests compute_check.cpp matrix_test_main.cpp)
+
+# ============================================================
+# test_network.exe — network layer unit tests
+# Build: cmake --build build --target test_network
+# Run:   build\test_network.exe
+# ============================================================
+add_executable(test_network
+        test_network.cpp
+        network.cpp
+        global.cpp
+        compute_check.cpp
+        matrix_funcs.cpp
+        Calculate_Performance.cpp
+        Raft_Engine.cpp
+)
+target_include_directories(test_network PRIVATE
+        "${MSQUIC_INCLUDE}"
+        "${NURAFT_INCLUDE}"
+        "${NURAFT_ASIO}")
+target_compile_definitions(test_network PRIVATE ${HiveMind_COMPILE_DEFS})
+target_compile_options(test_network PRIVATE ${HiveMind_PCH_FLAG})
+target_link_libraries(test_network PRIVATE
+        kernel32
+        ws2_32
+        advapi32
+        pdh
+        "${MSQUIC_LIB}"
+        tiny_sha
+        OpenMP::OpenMP_CXX
+)
+copy_msquic_dll(test_network)
+link_nuraft(test_network)

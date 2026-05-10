@@ -28,33 +28,32 @@ int calculate(int size, long timeout) {
             std::chrono::high_resolution_clock::now()
         ).time_since_epoch().count();
     bool flag = false;
-    #pragma omp parallel for collapse(2) omp_schedule(static)
-    for (int i = 0; i < size; i++) {
-        for (int j = 0; j < size; j++) {
-            if (
-                std::chrono::time_point_cast<std::chrono::nanoseconds>(
-                    std::chrono::high_resolution_clock::now()
-                    ).time_since_epoch().count() - start > timeout
-                ) {
-                #pragma omp single
-                {
-                    flag = true;
-                }
-                continue;
-            }
-            int sum = 0;
-            for (int k = 0; k < size; k++) {
-                sum += matrix1[i*size+k] * matrix2[k*size+j];
-            }
-            matrix3[i*size+j] = sum;
+    // MSVC OpenMP 2.0: no collapse clause; flatten manually.
+    // Use a shared atomic flag to signal timeout across threads.
+    int total = size * size;
+    #pragma omp parallel for schedule(static)
+    for (int ij = 0; ij < total; ij++) {
+        if (flag) continue;  // respect timeout flag; omp cancel not in 2.0
+        if (std::chrono::time_point_cast<std::chrono::nanoseconds>(
+                std::chrono::high_resolution_clock::now()
+            ).time_since_epoch().count() - start > timeout) {
+            flag = true;     // write is benign race: all threads write same value
+            continue;
         }
+        int i = ij / size;
+        int j = ij % size;
+        int sum = 0;
+        for (int k = 0; k < size; k++) {
+            sum += matrix1[i*size+k] * matrix2[k*size+j];
+        }
+        matrix3[i*size+j] = sum;
     }
     long long end = std::chrono::time_point_cast<std::chrono::nanoseconds>(
             std::chrono::high_resolution_clock::now()
         ).time_since_epoch().count();
-    free(matrix1);
-    free(matrix2);
-    free(matrix3);
+    delete[] matrix1;
+    delete[] matrix2;
+    delete[] matrix3;
     int difference = end - start;
     if (flag) return -1;
     return difference;
