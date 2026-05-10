@@ -285,15 +285,73 @@ void NetworkManager::wireHeartbeatReceiver()
         });
 }
 
+// ── Per-connection context ────────────────────────────────────────────────────
+//
+// Allocated when a connection is accepted (listener_cb) or opened (send()).
+// Stores the peer IP string so stream_cb can pass it to recv_cb_.
+// Also accumulates received bytes across multiple RECEIVE events so the
+// caller always sees complete messages (heartbeats, OFLD, OFRS).
+//
+// Lifetime: created on NEW_CONNECTION / ConnectionOpen, deleted in
+//           SHUTDOWN_COMPLETE.  MSQuic guarantees SHUTDOWN_COMPLETE fires
+//           exactly once per connection handle.
+
+struct ConnCtx {
+    QuicTransport* self;
+    std::string    peer_ip;    // dotted-decimal, e.g. "192.168.1.5"
+    std::string    peer_ep;    // "ip:port" for the recv callback
+    std::vector<uint8_t> buf;  // accumulation buffer for fragmented receives
+};
+
+// Extract dotted-decimal peer IP from a QUIC connection handle.
+static std::string peer_ip_from_conn(const QUIC_API_TABLE* api, HQUIC conn)
+{
+    QUIC_ADDR addr = {};
+    uint32_t  size = sizeof(addr);
+    if (QUIC_FAILED(api->GetParam(conn,
+                                   QUIC_PARAM_CONN_REMOTE_ADDRESS,
+                                   &size, &addr)))
+        return "unknown";
+
+    char buf[INET6_ADDRSTRLEN] = {};
+    // MSQuic uses QUIC_ADDR which is a union of sockaddr variants.
+    // Cast to sockaddr_in for IPv4 (our network is IPv4-only).
+    auto* sa4 = reinterpret_cast<sockaddr_in*>(&addr);
+    inet_ntop(AF_INET, &sa4->sin_addr, buf, sizeof(buf));
+    uint16_t port = ntohs(sa4->sin_port);
+
+    return std::string(buf) + ":" + std::to_string(port);
+}
+
 void QuicTransport::shutdown()
 {
     if (!ready_) return;
     ready_ = false;
-    if (listener_ && api_) api_->ListenerClose(listener_);
+
+    // Close the listener first so no new connections arrive.
+    if (listener_ && api_) {
+        api_->ListenerStop(listener_);
+        api_->ListenerClose(listener_);
+        listener_ = nullptr;
+    }
+
+    // Shutdown all tracked connections gracefully.
+    {
+        std::lock_guard<std::mutex> lk(conn_mtx_);
+        for (auto& [ip, conn] : conn_map_)
+            if (conn && api_)
+                api_->ConnectionShutdown(conn,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, 0);
+        conn_map_.clear();
+    }
+
+    // Give connections a moment to complete SHUTDOWN_COMPLETE callbacks.
+    Sleep(50);
+
     if (config_   && api_) api_->ConfigurationClose(config_);
     if (reg_      && api_) api_->RegistrationClose(reg_);
     if (api_)              MsQuicClose(api_);
-    listener_ = config_ = reg_ = nullptr;
+    config_ = reg_ = nullptr;
     api_ = nullptr;
 }
 
@@ -311,24 +369,43 @@ bool QuicTransport::send(const std::string& endpoint,
                      ? static_cast<uint16_t>(std::stoi(endpoint.substr(colon+1)))
                      : static_cast<uint16_t>(QUIC_DATA_PORT);
 
-    // Open a short-lived connection, send on stream 0, close.
-    // For heartbeats and small messages this is acceptable; the transfer
-    // engine will hold connections open for large bundles.
+    // Reuse an existing connection to this peer if one is open,
+    // otherwise open a new one.  This avoids per-heartbeat connection churn
+    // and keeps the peer IP available in conn_map_ for inbound routing.
     HQUIC conn = nullptr;
-    if (QUIC_FAILED(api_->ConnectionOpen(reg_, conn_cb, this, &conn)))
-        return false;
+    {
+        std::lock_guard<std::mutex> lk(conn_mtx_);
+        auto it = conn_map_.find(ip);
+        if (it != conn_map_.end())
+            conn = it->second;
+    }
 
-    QUIC_ADDR peer = {};
-    QuicAddrSetFamily(&peer, QUIC_ADDRESS_FAMILY_INET);
-    QuicAddrSetPort(&peer, port);
-    inet_pton(AF_INET, ip.c_str(),
-              &reinterpret_cast<SOCKADDR_IN*>(&peer)->sin_addr);
+    bool new_conn = (conn == nullptr);
+    if (new_conn) {
+        // Allocate context before ConnectionOpen so conn_cb has it immediately.
+        auto* cctx    = new ConnCtx();
+        cctx->self    = this;
+        cctx->peer_ip = ip;
+        cctx->peer_ep = ip + ":" + std::to_string(port);
 
-    if (QUIC_FAILED(api_->ConnectionStart(conn, config_,
-                                           QUIC_ADDRESS_FAMILY_INET,
-                                           ip.c_str(), port))) {
-        api_->ConnectionClose(conn);
-        return false;
+        if (QUIC_FAILED(api_->ConnectionOpen(reg_, conn_cb, cctx, &conn))) {
+            delete cctx;
+            return false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(conn_mtx_);
+            conn_map_[ip] = conn;
+        }
+
+        if (QUIC_FAILED(api_->ConnectionStart(conn, config_,
+                                               QUIC_ADDRESS_FAMILY_INET,
+                                               ip.c_str(), port))) {
+            std::lock_guard<std::mutex> lk(conn_mtx_);
+            conn_map_.erase(ip);
+            // conn_cb SHUTDOWN_COMPLETE will free cctx and call ConnectionClose
+            return false;
+        }
     }
 
     HQUIC stream = nullptr;
@@ -358,10 +435,15 @@ bool QuicTransport::send(const std::string& endpoint,
     if (QUIC_FAILED(st)) {
         delete[] buf_data;
         api_->StreamClose(stream);
-        api_->ConnectionClose(conn);
+        // On failure remove from map so next call opens a fresh connection.
+        if (new_conn) {
+            std::lock_guard<std::mutex> lk(conn_mtx_);
+            conn_map_.erase(ip);
+        }
         return false;
     }
-    // buf_data freed in stream_cb SEND_COMPLETE event.
+    // buf_data freed in stream_cb SEND_COMPLETE.
+    // Connection stays open in conn_map_ for reuse.
     return true;
 }
 
@@ -377,11 +459,28 @@ QUIC_STATUS QUIC_API QuicTransport::listener_cb(
         HQUIC, void* ctx, QUIC_LISTENER_EVENT* ev)
 {
     auto* self = static_cast<QuicTransport*>(ctx);
+
     if (ev->Type == QUIC_LISTENER_EVENT_NEW_CONNECTION) {
-        self->api_->SetCallbackHandler(
-            ev->NEW_CONNECTION.Connection, (void*)conn_cb, self);
-        return self->api_->ConnectionSetConfiguration(
-            ev->NEW_CONNECTION.Connection, self->config_);
+        HQUIC conn = ev->NEW_CONNECTION.Connection;
+
+        // Allocate per-connection context with the peer's address.
+        auto* cctx      = new ConnCtx();
+        cctx->self      = self;
+        cctx->peer_ep   = peer_ip_from_conn(self->api_, conn);
+        // Store plain IP (without port) for routing
+        auto colon      = cctx->peer_ep.rfind(':');
+        cctx->peer_ip   = (colon != std::string::npos)
+                          ? cctx->peer_ep.substr(0, colon)
+                          : cctx->peer_ep;
+
+        // Register this IP so send() can look up the connection later.
+        {
+            std::lock_guard<std::mutex> lk(self->conn_mtx_);
+            self->conn_map_[cctx->peer_ip] = conn;
+        }
+
+        self->api_->SetCallbackHandler(conn, (void*)conn_cb, cctx);
+        return self->api_->ConnectionSetConfiguration(conn, self->config_);
     }
     return QUIC_STATUS_SUCCESS;
 }
@@ -389,15 +488,39 @@ QUIC_STATUS QUIC_API QuicTransport::listener_cb(
 QUIC_STATUS QUIC_API QuicTransport::conn_cb(
         HQUIC conn, void* ctx, QUIC_CONNECTION_EVENT* ev)
 {
-    auto* self = static_cast<QuicTransport*>(ctx);
+    auto* cctx = static_cast<ConnCtx*>(ctx);
+    auto* self = cctx->self;
+
     switch (ev->Type) {
     case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
+        // Pass the ConnCtx as stream context so stream_cb has the peer IP.
         self->api_->SetCallbackHandler(
-            ev->PEER_STREAM_STARTED.Stream, (void*)stream_cb, self);
+            ev->PEER_STREAM_STARTED.Stream, (void*)stream_cb, cctx);
         break;
+
+    case QUIC_CONNECTION_EVENT_CONNECTED:
+        // Outbound connection: peer address is now available.
+        if (cctx->peer_ip.empty() || cctx->peer_ip == "unknown") {
+            cctx->peer_ep = peer_ip_from_conn(self->api_, conn);
+            auto colon    = cctx->peer_ep.rfind(':');
+            cctx->peer_ip = (colon != std::string::npos)
+                            ? cctx->peer_ep.substr(0, colon)
+                            : cctx->peer_ep;
+            std::lock_guard<std::mutex> lk(self->conn_mtx_);
+            self->conn_map_[cctx->peer_ip] = conn;
+        }
+        break;
+
     case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+        // Remove from map and free context.
+        {
+            std::lock_guard<std::mutex> lk(self->conn_mtx_);
+            self->conn_map_.erase(cctx->peer_ip);
+        }
         self->api_->ConnectionClose(conn);
+        delete cctx;
         break;
+
     default: break;
     }
     return QUIC_STATUS_SUCCESS;
@@ -406,28 +529,45 @@ QUIC_STATUS QUIC_API QuicTransport::conn_cb(
 QUIC_STATUS QUIC_API QuicTransport::stream_cb(
         HQUIC stream, void* ctx, QUIC_STREAM_EVENT* ev)
 {
-    auto* self = static_cast<QuicTransport*>(ctx);
+    auto* cctx = static_cast<ConnCtx*>(ctx);
+    auto* self = cctx->self;
+
     switch (ev->Type) {
     case QUIC_STREAM_EVENT_RECEIVE: {
-        // Collect received buffers and fire the callback.
-        std::string from = "unknown";  // TODO: extract peer addr from conn context
-        std::lock_guard<std::mutex> lk(self->cb_mtx_);
-        if (self->recv_cb_) {
-            for (uint32_t i = 0; i < ev->RECEIVE.BufferCount; ++i) {
-                self->recv_cb_(from,
-                               ev->RECEIVE.Buffers[i].Buffer,
-                               ev->RECEIVE.Buffers[i].Length);
+        // Accumulate received buffers — a single logical message may arrive
+        // in multiple RECEIVE events (especially on slow links or with large
+        // OFLD/OFRS payloads).
+        for (uint32_t i = 0; i < ev->RECEIVE.BufferCount; ++i) {
+            const uint8_t* d = ev->RECEIVE.Buffers[i].Buffer;
+            uint32_t        n = ev->RECEIVE.Buffers[i].Length;
+            cctx->buf.insert(cctx->buf.end(), d, d + n);
+        }
+
+        // Dispatch complete messages to recv_cb_.
+        // HeartbeatPacket (20 bytes), OFLD (12+N), OFRS (16+N+M) all
+        // self-describe their length.  Dispatch whatever we have — the
+        // callback in wireHeartbeatReceiver() is defensive about length.
+        if (!cctx->buf.empty()) {
+            std::lock_guard<std::mutex> lk(self->cb_mtx_);
+            if (self->recv_cb_) {
+                self->recv_cb_(cctx->peer_ip,
+                               cctx->buf.data(),
+                               cctx->buf.size());
             }
+            cctx->buf.clear();
         }
         break;
     }
+
     case QUIC_STREAM_EVENT_SEND_COMPLETE:
         // Free the buffer we allocated in send().
         delete[] static_cast<uint8_t*>(ev->SEND_COMPLETE.ClientContext);
         break;
+
     case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
         self->api_->StreamClose(stream);
         break;
+
     default: break;
     }
     return QUIC_STATUS_SUCCESS;
@@ -601,11 +741,15 @@ bool NetworkManager::joinNetwork(const std::string& leader_ip,
                                   const std::string& network_name,
                                   const std::string& password)
 {
-    std::lock_guard<std::mutex> lk(state_mtx_);
-    if (connected_) {
-        std::cerr << "[Network] Already connected. Disconnect first.\n";
-        return false;
+    {
+        std::lock_guard<std::mutex> lk(state_mtx_);
+        if (connected_) {
+            std::cerr << "[Network] Already connected. Disconnect first.\n";
+            return false;
+        }
     }
+    // Network I/O (UDP send + 3 s wait) happens WITHOUT state_mtx_ held
+    // to avoid deadlocking with scanListenerLoop which also takes state_mtx_.
 
     // ── Step 1: Build and send JoinRequest ───────────────────────────────────
     JoinRequest req = {};
@@ -683,6 +827,8 @@ bool NetworkManager::joinNetwork(const std::string& leader_ip,
     std::cout << "[Network] Join accepted. Assigned node ID: " << assigned_id << "\n";
 
     // ── Step 4: Start Raft with leader-assigned ID ────────────────────────────
+    std::lock_guard<std::mutex> lk(state_mtx_);
+    if (connected_) return false;  // raced with another join
     network_name_        = network_name;
     network_password_    = password;
     LOCAL_RAFT_NODE_ID   = static_cast<int>(assigned_id);
@@ -843,27 +989,29 @@ void NetworkManager::scanListenerLoop()
             std::cerr << "[Network] JOIN rejected (bad password) from "
                       << reinterpret_cast<char*>(req.joiner_ip) << "\n";
         } else {
-            // Assign next node ID and record the new peer in Raft.
-            int new_id;
-            {
-                std::lock_guard<std::mutex> lk(state_mtx_);
-                new_id = next_node_id_++;
-            }
+            // Assign next node ID atomically (no state_mtx_ — avoid deadlock
+            // with joinNetwork() which holds state_mtx_ during the UDP wait).
+            int new_id = next_node_id_++;
 
             std::string joiner_ip(reinterpret_cast<char*>(req.joiner_ip));
             std::string joiner_ep = joiner_ip + ":" + std::to_string(req.raft_port);
-
-            // Add the new peer to the Raft cluster.
-            if (raft_) {
-                raft_->add_peer(new_id, joiner_ep, joiner_ip,
-                                req.benchmark_metric, req.capacity_weight);
-            }
 
             resp.result           = JOIN_RESULT_OK;
             resp.assigned_node_id = static_cast<uint32_t>(new_id);
 
             std::cout << "[Network] JOIN accepted: node " << new_id
                       << " (" << joiner_ip << ")\n";
+
+            // Add peer to Raft on a detached thread — add_srv() may block
+            // waiting for Raft consensus and must not stall the JOIN handler.
+            if (raft_) {
+                auto r = raft_;
+                std::thread([r, new_id, joiner_ep, joiner_ip,
+                             bm = req.benchmark_metric,
+                             cw = req.capacity_weight]() {
+                    r->add_peer(new_id, joiner_ep, joiner_ip, bm, cw);
+                }).detach();
+            }
         }
 
         // Send response back to joiner.
@@ -914,10 +1062,14 @@ bool NetworkManager::isLeader() const
 bool NetworkManager::disconnect()
 {
     stopping_ = true;
+
+    // Stop Raft before joining threads — prevents deadlock where
+    // the detached add_peer thread holds a NuRaft lock that shutdown()
+    // waits on, while heartbeat/scan threads wait for stopping_ loops.
+    if (raft_) { raft_->stop(); raft_.reset(); }
+
     if (heartbeat_thread_.joinable())     heartbeat_thread_.join();
     if (scan_listener_thread_.joinable()) scan_listener_thread_.join();
-
-    if (raft_) { raft_->stop(); raft_.reset(); }
 
     connected_ = false;
     network_name_.clear();

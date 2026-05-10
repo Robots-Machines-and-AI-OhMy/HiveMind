@@ -36,6 +36,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <thread>
 #include <atomic>
 #include <cstdint>
@@ -105,6 +106,13 @@ private:
     std::atomic<bool>     ready_     { false };
     RecvCallback          recv_cb_;
     mutable std::mutex    cb_mtx_;
+
+    // Live connection map: peer_ip -> HQUIC connection handle.
+    // Populated in listener_cb (inbound) and send() (outbound).
+    // Allows send() to reuse existing connections and stream_cb to
+    // provide the correct peer IP to the recv callback.
+    std::unordered_map<std::string, HQUIC> conn_map_;
+    mutable std::mutex                     conn_mtx_;
 
     // Static MSQuic callbacks (must match QUIC_LISTENER_CALLBACK etc.)
     static QUIC_STATUS QUIC_API listener_cb(HQUIC listener,
@@ -207,6 +215,7 @@ private:
     std::thread heartbeat_thread_;
     std::thread scan_listener_thread_;
 
-    // Node-id counter (leader assigns IDs; followers receive theirs on join).
-    int next_node_id_ = 2;   // leader always takes ID 1
+    // Node-id counter — atomic so scanListenerLoop can increment it
+    // without holding state_mtx_ (which joinNetwork holds during UDP wait).
+    std::atomic<int> next_node_id_ { 2 };  // leader always takes ID 1
 };

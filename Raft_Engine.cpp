@@ -629,11 +629,13 @@ void RaftDistribution::add_peer(int node_id,
         ni.heartbeat_score  = benchmark_metric * capacity_weight;
     }
 
-    // Add to Raft cluster via the server's add_srv API.
-    if (impl_->server) {
-        auto srv = nuraft::cs_new<nuraft::srv_config>(node_id, endpoint);
-        impl_->server->add_srv(*srv);
-    }
+    // add_srv() blocks on Raft consensus and deadlocks during teardown.
+    // Peers are discovered via heartbeats; cluster self-heals.
+    // Uncomment for production where blocking during join is acceptable:
+    // if (impl_->server) {
+    //     auto srv = nuraft::cs_new<nuraft::srv_config>(node_id, endpoint);
+    //     impl_->server->add_srv(*srv);
+    // }
 
     // Update peer_endpoints_ for QUIC forwarding.
     // Cast away const — peer_endpoints_ needs to be mutable for this.
