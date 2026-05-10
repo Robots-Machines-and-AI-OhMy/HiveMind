@@ -14,6 +14,7 @@
 #include "Raft_Engine.hpp"
 #include "Network.hpp"
 #include "tiny_sha.h"
+#include "join_protocol.hpp"
 
 // Network.hpp sets WIN32_LEAN_AND_MEAN + NOMINMAX + winsock2.h
 // before msquic.h, so the order above is safe.
@@ -56,6 +57,53 @@ struct HeartbeatPacket {
     int32_t node_id;
 };
 #pragma pack(pop)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §0  Auth helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Hash a password with SHA-256 using tiny-sha.
+// Empty password (open network) produces all-zero hash.
+static void hash_password(const std::string& pw, uint8_t out[32])
+{
+    memset(out, 0, 32);
+    if (pw.empty()) return;
+    SHA256_CTX ctx;
+    SHA256Init(&ctx);
+    SHA256Update(&ctx,
+                 reinterpret_cast<const uint8_t*>(pw.data()),
+                 pw.size());
+    SHA256Final(&ctx, out);
+}
+
+// Send a fixed-size struct over a blocking UDP socket to a specific endpoint.
+static bool udp_send_to(const std::string& ip, uint16_t port,
+                         const void* data, size_t len)
+{
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) return false;
+    sockaddr_in dst = {};
+    dst.sin_family = AF_INET;
+    dst.sin_port   = htons(port);
+    inet_pton(AF_INET, ip.c_str(), &dst.sin_addr);
+    int r = sendto(s, reinterpret_cast<const char*>(data),
+                   static_cast<int>(len), 0,
+                   reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    closesocket(s);
+    return r == static_cast<int>(len);
+}
+
+// Blocking receive with timeout_ms.  Returns bytes read or -1.
+static int udp_recv_timed(SOCKET s, void* buf, int buf_len, int timeout_ms)
+{
+    DWORD tv = static_cast<DWORD>(timeout_ms);
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<char*>(&tv), sizeof(tv));
+    sockaddr_in from = {};
+    int from_len = sizeof(from);
+    return recvfrom(s, reinterpret_cast<char*>(buf), buf_len, 0,
+                    reinterpret_cast<sockaddr*>(&from), &from_len);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §1  QuicTransport
@@ -481,23 +529,93 @@ bool NetworkManager::joinNetwork(const std::string& leader_ip,
         return false;
     }
 
-    // TODO: authenticate password with leader over QUIC before proceeding.
-    // For now we trust the caller has verified the password via CLI.
-    (void)password;
+    // ── Step 1: Build and send JoinRequest ───────────────────────────────────
+    JoinRequest req = {};
+    req.magic            = JOIN_REQ_MAGIC;
+    req.version          = JOIN_PROTO_VER;
+    req.raft_port        = static_cast<uint32_t>(RAFT_PORT);
+    req.benchmark_metric = metric;
+    req.capacity_weight  = NODE_CAPACITY_WEIGHT;
 
-    network_name_ = network_name;
+    // Copy local IP into the fixed char array.
+    strncpy_s(reinterpret_cast<char*>(req.joiner_ip),
+              sizeof(req.joiner_ip),
+              local_ip_.c_str(), _TRUNCATE);
 
-    // Assign a node ID — in the full implementation the leader assigns this
-    // and sends it back over QUIC.  For now we use a client-side increment.
-    LOCAL_RAFT_NODE_ID  = 2;  // TODO: receive from leader
-    LOCAL_RAFT_ENDPOINT = local_ip_ + ":" + std::to_string(RAFT_PORT);
+    // Hash the password — open networks send all-zero hash.
+    hash_password(password, req.password_sha256);
+
+    std::cout << "[Network] Sending join request to " << leader_ip << "...\n";
+
+    // Open a UDP socket bound to an ephemeral port so we can receive the reply.
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        std::cerr << "[Network] Failed to create join socket.\n";
+        return false;
+    }
+
+    // Bind to any local port so the leader can reply to us.
+    sockaddr_in local_addr = {};
+    local_addr.sin_family      = AF_INET;
+    local_addr.sin_port        = 0;          // OS picks the port
+    local_addr.sin_addr.s_addr = INADDR_ANY;
+    bind(sock, reinterpret_cast<sockaddr*>(&local_addr), sizeof(local_addr));
+
+    // Send the request.
+    sockaddr_in dst = {};
+    dst.sin_family = AF_INET;
+    dst.sin_port   = htons(static_cast<u_short>(JOIN_LISTEN_PORT));
+    inet_pton(AF_INET, leader_ip.c_str(), &dst.sin_addr);
+
+    int sent = sendto(sock,
+                      reinterpret_cast<const char*>(&req), sizeof(req), 0,
+                      reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    if (sent != sizeof(req)) {
+        std::cerr << "[Network] Failed to send join request.\n";
+        closesocket(sock);
+        return false;
+    }
+
+    // ── Step 2: Wait for JoinResponse ────────────────────────────────────────
+    JoinResponse resp = {};
+    int n = udp_recv_timed(sock, &resp, sizeof(resp), JOIN_RESPONSE_TIMEOUT_MS);
+    closesocket(sock);
+
+    if (n != sizeof(resp) || resp.magic != JOIN_RESP_MAGIC) {
+        std::cerr << "[Network] No valid response from leader (timeout or bad magic).\n";
+        return false;
+    }
+
+    // ── Step 3: Interpret response ────────────────────────────────────────────
+    switch (resp.result) {
+    case JOIN_RESULT_OK:
+        break;
+    case JOIN_RESULT_BAD_PASSWORD:
+        std::cerr << "[Network] Join rejected: incorrect password.\n";
+        return false;
+    case JOIN_RESULT_NETWORK_FULL:
+        std::cerr << "[Network] Join rejected: network is full.\n";
+        return false;
+    default:
+        std::cerr << "[Network] Join rejected by leader (code " << resp.result << ").\n";
+        return false;
+    }
+
+    uint32_t assigned_id = resp.assigned_node_id;
+    std::cout << "[Network] Join accepted. Assigned node ID: " << assigned_id << "\n";
+
+    // ── Step 4: Start Raft with leader-assigned ID ────────────────────────────
+    network_name_        = network_name;
+    network_password_    = password;
+    LOCAL_RAFT_NODE_ID   = static_cast<int>(assigned_id);
+    LOCAL_RAFT_ENDPOINT  = local_ip_ + ":" + std::to_string(RAFT_PORT);
 
     std::unordered_map<int, std::string> endpoints = {
-        { 1, leader_ip + ":" + std::to_string(RAFT_PORT) },
+        { 1,                 leader_ip + ":" + std::to_string(RAFT_PORT) },
         { LOCAL_RAFT_NODE_ID, LOCAL_RAFT_ENDPOINT }
     };
     std::unordered_map<int, std::string> ips = {
-        { 1, leader_ip },
+        { 1,                 leader_ip },
         { LOCAL_RAFT_NODE_ID, local_ip_ }
     };
 
@@ -562,49 +680,122 @@ void NetworkManager::heartbeatLoop()
 
 void NetworkManager::scanListenerLoop()
 {
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) return;
+    // ── UDP scan responder ────────────────────────────────────────────────────
+    SOCKET scan_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (scan_sock == INVALID_SOCKET) return;
 
-    // Allow port reuse so multiple apps on the same machine can coexist.
     BOOL reuse = TRUE;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+    setsockopt(scan_sock, SOL_SOCKET, SO_REUSEADDR,
                reinterpret_cast<char*>(&reuse), sizeof(reuse));
 
-    sockaddr_in addr = {};
-    addr.sin_family      = AF_INET;
-    addr.sin_port        = htons(static_cast<u_short>(SCAN_UDP_PORT));
-    addr.sin_addr.s_addr = INADDR_ANY;
-    bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    sockaddr_in scan_addr = {};
+    scan_addr.sin_family      = AF_INET;
+    scan_addr.sin_port        = htons(static_cast<u_short>(SCAN_UDP_PORT));
+    scan_addr.sin_addr.s_addr = INADDR_ANY;
+    bind(scan_sock, reinterpret_cast<sockaddr*>(&scan_addr), sizeof(scan_addr));
 
-    DWORD timeout_ms = 500;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-               reinterpret_cast<char*>(&timeout_ms), sizeof(timeout_ms));
+    DWORD scan_timeout = 200;
+    setsockopt(scan_sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<char*>(&scan_timeout), sizeof(scan_timeout));
 
-    char buf[256];
+    // ── JOIN request listener ─────────────────────────────────────────────────
+    // Only the leader handles JoinRequests; followers ignore them.
+    SOCKET join_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (join_sock == INVALID_SOCKET) { closesocket(scan_sock); return; }
+
+    setsockopt(join_sock, SOL_SOCKET, SO_REUSEADDR,
+               reinterpret_cast<char*>(&reuse), sizeof(reuse));
+
+    sockaddr_in join_addr = {};
+    join_addr.sin_family      = AF_INET;
+    join_addr.sin_port        = htons(static_cast<u_short>(JOIN_LISTEN_PORT));
+    join_addr.sin_addr.s_addr = INADDR_ANY;
+    bind(join_sock, reinterpret_cast<sockaddr*>(&join_addr), sizeof(join_addr));
+
+    DWORD join_timeout = 200;
+    setsockopt(join_sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<char*>(&join_timeout), sizeof(join_timeout));
+
+    // Pre-compute the expected password hash so we only hash once per session.
+    uint8_t expected_hash[32];
+    hash_password(network_password_, expected_hash);
+
+    char scan_buf[512];
     sockaddr_in from = {};
     int from_len = sizeof(from);
 
     while (!stopping_) {
-        int n = recvfrom(sock, buf, sizeof(buf) - 1, 0,
+        // ── Handle scan probe ─────────────────────────────────────────────────
+        from_len = sizeof(from);
+        int n = recvfrom(scan_sock, scan_buf, sizeof(scan_buf) - 1, 0,
                          reinterpret_cast<sockaddr*>(&from), &from_len);
-        if (n <= 0) continue;
-        buf[n] = '\0';
+        if (n > 0) {
+            scan_buf[n] = '\0';
+            if (strcmp(scan_buf, SCAN_PROBE) == 0) {
+                char reply[256];
+                snprintf(reply, sizeof(reply),
+                         "%s name=%s pw=%d",
+                         SCAN_REPLY,
+                         network_name_.c_str(),
+                         network_password_.empty() ? 0 : 1);
+                sendto(scan_sock, reply, static_cast<int>(strlen(reply)) + 1, 0,
+                       reinterpret_cast<sockaddr*>(&from), from_len);
+            }
+        }
 
-        if (strcmp(buf, SCAN_PROBE) != 0) continue;
+        // ── Handle join request (leader only) ─────────────────────────────────
+        if (!isLeader()) continue;
 
-        // Respond with our network info.
-        char reply[256];
-        snprintf(reply, sizeof(reply),
-                 "%s name=%s pw=%d",
-                 SCAN_REPLY,
-                 network_name_.c_str(),
-                 network_password_.empty() ? 0 : 1);
+        JoinRequest req = {};
+        from_len = sizeof(from);
+        n = recvfrom(join_sock,
+                     reinterpret_cast<char*>(&req), sizeof(req), 0,
+                     reinterpret_cast<sockaddr*>(&from), &from_len);
 
-        sendto(sock, reply, static_cast<int>(strlen(reply)) + 1, 0,
+        if (n != sizeof(req) || req.magic != JOIN_REQ_MAGIC) continue;
+
+        // Authenticate: compare submitted hash with expected hash.
+        JoinResponse resp = {};
+        resp.magic   = JOIN_RESP_MAGIC;
+        resp.version = JOIN_PROTO_VER;
+
+        if (memcmp(req.password_sha256, expected_hash, 32) != 0) {
+            resp.result           = JOIN_RESULT_BAD_PASSWORD;
+            resp.assigned_node_id = 0;
+            std::cerr << "[Network] JOIN rejected (bad password) from "
+                      << reinterpret_cast<char*>(req.joiner_ip) << "\n";
+        } else {
+            // Assign next node ID and record the new peer in Raft.
+            int new_id;
+            {
+                std::lock_guard<std::mutex> lk(state_mtx_);
+                new_id = next_node_id_++;
+            }
+
+            std::string joiner_ip(reinterpret_cast<char*>(req.joiner_ip));
+            std::string joiner_ep = joiner_ip + ":" + std::to_string(req.raft_port);
+
+            // Add the new peer to the Raft cluster.
+            if (raft_) {
+                raft_->add_peer(new_id, joiner_ep, joiner_ip,
+                                req.benchmark_metric, req.capacity_weight);
+            }
+
+            resp.result           = JOIN_RESULT_OK;
+            resp.assigned_node_id = static_cast<uint32_t>(new_id);
+
+            std::cout << "[Network] JOIN accepted: node " << new_id
+                      << " (" << joiner_ip << ")\n";
+        }
+
+        // Send response back to joiner.
+        sendto(join_sock,
+               reinterpret_cast<const char*>(&resp), sizeof(resp), 0,
                reinterpret_cast<sockaddr*>(&from), from_len);
     }
 
-    closesocket(sock);
+    closesocket(scan_sock);
+    closesocket(join_sock);
 }
 
 // ── STATUS / LEADER / DISCONNECT ─────────────────────────────────────────────

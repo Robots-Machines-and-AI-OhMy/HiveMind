@@ -104,7 +104,7 @@ endif()
 # /FI force-includes the PCH before any source line so winsock2.h
 # always precedes windows.h regardless of individual file order.
 # ============================================================
-set(HiveMind_COMPILE_DEFS WIN32_LEAN_AND_MEAN NOMINMAX)
+set(HiveMind_COMPILE_DEFS WIN32_LEAN_AND_MEAN NOMINMAX ENABLE_SHA256=1)
 set(HiveMind_PCH_FLAG /FI${CMAKE_SOURCE_DIR}/HiveMind_pch.hpp)
 
 # ============================================================

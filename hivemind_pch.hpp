@@ -4,6 +4,11 @@
 #ifndef MINDMESH_PCH_HPP
 #define MINDMESH_PCH_HPP
 
+// Enable SHA-256 in tiny-sha before the header is included anywhere
+#ifndef ENABLE_SHA256
+#define ENABLE_SHA256 1
+#endif
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif

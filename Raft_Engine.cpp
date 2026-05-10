@@ -46,23 +46,16 @@
 #include <unordered_map>
 #include <vector>
 
-// pImpl — keeps nuraft:: types out of Raft_Engine.hpp
-namespace nuraft_detail {
-struct RaftImpl {
+// pImpl definition — must be in dist namespace to match the nested forward decl
+// in Raft_Engine.hpp: struct dist::RaftDistribution::RaftImpl
+namespace dist {
+struct RaftDistribution::RaftImpl {
     nuraft::ptr<nuraft::raft_server>  server;
-    // asio_service is managed internally by raft_launcher in this NuRaft version
+    // asio_service lifecycle managed internally by raft_launcher
 };
-} // namespace nuraft_detail
+} // namespace dist (RaftImpl definition)
 
 namespace dist {
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EntryType tag (first byte of every log buffer)
-// ─────────────────────────────────────────────────────────────────────────────
-enum class EntryType : uint8_t {
-    OFFLOAD_REQUEST  = 0x01,
-    OFFLOAD_RESPONSE = 0x02,
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §1  PORTABLE SERIALISATION
@@ -101,6 +94,8 @@ static std::string get_string(nuraft::buffer_serializer& bs) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+static constexpr double OFFLOAD_THRESHOLD_PCT = 0.10;
+
 // §2  PENDING OFFLOAD FUTURES
 // ─────────────────────────────────────────────────────────────────────────────
 namespace {
@@ -394,7 +389,7 @@ RaftDistribution::RaftDistribution(
     const std::unordered_map<int,std::string>&  peer_ips)
     : quic_(quic)
     , peer_endpoints_(peer_endpoints)
-    , impl_(std::make_unique<nuraft_detail::RaftImpl>())
+    , impl_(std::make_unique<RaftImpl>())
 {
     for (auto& [id, ip] : peer_ips) {
         NodeInfo info;
@@ -412,7 +407,6 @@ RaftDistribution::RaftDistribution(
 
 RaftDistribution::~RaftDistribution() { stop(); }
 
-int RaftDistribution::my_node_id() const { return LOCAL_RAFT_NODE_ID; }
 
 void RaftDistribution::start()
 {
@@ -607,6 +601,38 @@ std::string RaftDistribution::request_offload(
 
     OffloadResponse rsp = fut.get();
     return rsp.success ? rsp.target_ip : "";
+}
+
+// ── Peer management ───────────────────────────────────────────────────────────
+
+void RaftDistribution::add_peer(int node_id,
+                                 const std::string& endpoint,
+                                 const std::string& ip,
+                                 double benchmark_metric,
+                                 double capacity_weight)
+{
+    // Update our local node table.
+    {
+        std::lock_guard<std::mutex> lk(nodes_mtx_);
+        NodeInfo& ni       = nodes_[node_id];
+        ni.id              = node_id;
+        ni.ip              = ip;
+        ni.benchmark_metric = benchmark_metric;
+        ni.heartbeat_score  = benchmark_metric * capacity_weight;
+    }
+
+    // Add to Raft cluster via the server's add_srv API.
+    if (impl_->server) {
+        auto srv = nuraft::cs_new<nuraft::srv_config>(node_id, endpoint);
+        impl_->server->add_srv(*srv);
+    }
+
+    // Update peer_endpoints_ for QUIC forwarding.
+    // Cast away const — peer_endpoints_ needs to be mutable for this.
+    const_cast<std::unordered_map<int,std::string>&>(peer_endpoints_)[node_id] = endpoint;
+
+    std::cout << "[raft] Added peer node " << node_id
+              << " at " << endpoint << "\n";
 }
 
 // ── Introspection ─────────────────────────────────────────────────────────────
