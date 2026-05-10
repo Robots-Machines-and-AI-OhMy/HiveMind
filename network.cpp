@@ -13,6 +13,7 @@
 #include "Calculate_Performance.hpp"
 #include "Raft_Engine.hpp"
 #include "Network.hpp"
+#include "tiny_sha.h"
 
 // Network.hpp sets WIN32_LEAN_AND_MEAN + NOMINMAX + winsock2.h
 // before msquic.h, so the order above is safe.

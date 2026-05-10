@@ -5,6 +5,24 @@ project(HiveMind)
 set(CMAKE_CXX_STANDARD 20)
 
 # ============================================================
+# tiny-sha (SHA hashing library)
+# ============================================================
+set(TINY_SHA_ROOT "${CMAKE_SOURCE_DIR}/tiny-sha")
+
+add_library(tiny_sha STATIC
+        "${TINY_SHA_ROOT}/src/tiny_sha.c"
+)
+
+target_include_directories(tiny_sha PUBLIC
+        "${TINY_SHA_ROOT}/src"
+)
+
+# Force C as language (important for MSVC consistency)
+set_target_properties(tiny_sha PROPERTIES
+        LINKER_LANGUAGE C
+)
+
+# ============================================================
 # TOOLCHAIN GUARD
 # This project requires MSVC (SEH, __declspec, Windows SDK).
 # Build from any MSVC environment:
@@ -119,7 +137,7 @@ target_include_directories(offload_hook PRIVATE
         "${NURAFT_ASIO}")
 target_compile_definitions(offload_hook PRIVATE ${HiveMind_COMPILE_DEFS})
 target_compile_options(offload_hook PRIVATE ${HiveMind_PCH_FLAG})
-target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh "${MSQUIC_LIB}")
+target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh "${MSQUIC_LIB}" tiny_sha)
 copy_msquic_dll(offload_hook)
 link_nuraft(offload_hook)
 
@@ -194,6 +212,7 @@ target_link_libraries(HiveMind PRIVATE
         advapi32
         pdh
         "${MSQUIC_LIB}"
+        tiny_sha
 )
 copy_msquic_dll(HiveMind)
 link_nuraft(HiveMind)
