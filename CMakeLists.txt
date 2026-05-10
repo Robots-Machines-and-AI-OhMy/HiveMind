@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(MindMesh)
+project(HiveMind)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -81,13 +81,13 @@ if (NOT MT_EXE)
 endif()
 
 # ============================================================
-# Shared compile options applied to all MindMesh targets.
+# Shared compile options applied to all HiveMind targets.
 # WIN32_LEAN_AND_MEAN + NOMINMAX prevent Windows header collisions.
 # /FI force-includes the PCH before any source line so winsock2.h
 # always precedes windows.h regardless of individual file order.
 # ============================================================
-set(MINDMESH_COMPILE_DEFS WIN32_LEAN_AND_MEAN NOMINMAX)
-set(MINDMESH_PCH_FLAG /FI${CMAKE_SOURCE_DIR}/mindmesh_pch.hpp)
+set(HiveMind_COMPILE_DEFS WIN32_LEAN_AND_MEAN NOMINMAX)
+set(HiveMind_PCH_FLAG /FI${CMAKE_SOURCE_DIR}/HiveMind_pch.hpp)
 
 # ============================================================
 # hook.dll
@@ -117,8 +117,8 @@ target_include_directories(offload_hook PRIVATE
         "${MSQUIC_INCLUDE}"
         "${NURAFT_INCLUDE}"
         "${NURAFT_ASIO}")
-target_compile_definitions(offload_hook PRIVATE ${MINDMESH_COMPILE_DEFS})
-target_compile_options(offload_hook PRIVATE ${MINDMESH_PCH_FLAG})
+target_compile_definitions(offload_hook PRIVATE ${HiveMind_COMPILE_DEFS})
+target_compile_options(offload_hook PRIVATE ${HiveMind_PCH_FLAG})
 target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh "${MSQUIC_LIB}")
 copy_msquic_dll(offload_hook)
 link_nuraft(offload_hook)
@@ -172,9 +172,9 @@ endforeach()
 # target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
 
 # ============================================================
-# MindMesh.exe — main CLI application
+# HiveMind.exe — main CLI application
 # ============================================================
-add_executable(MindMesh
+add_executable(HiveMind
         HiveMindCLI.cpp
         compute_check.cpp
         Calculate_Performance.cpp
@@ -182,21 +182,21 @@ add_executable(MindMesh
         network.cpp
         Raft_Engine.cpp
 )
-target_include_directories(MindMesh PRIVATE
+target_include_directories(HiveMind PRIVATE
         "${MSQUIC_INCLUDE}"
         "${NURAFT_INCLUDE}"
         "${NURAFT_ASIO}")
-target_compile_definitions(MindMesh PRIVATE ${MINDMESH_COMPILE_DEFS})
-target_compile_options(MindMesh PRIVATE ${MINDMESH_PCH_FLAG})
-target_link_libraries(MindMesh PRIVATE
+target_compile_definitions(HiveMind PRIVATE ${HiveMind_COMPILE_DEFS})
+target_compile_options(HiveMind PRIVATE ${HiveMind_PCH_FLAG})
+target_link_libraries(HiveMind PRIVATE
         kernel32
         ws2_32
         advapi32
         pdh
         "${MSQUIC_LIB}"
 )
-copy_msquic_dll(MindMesh)
-link_nuraft(MindMesh)
+copy_msquic_dll(HiveMind)
+link_nuraft(HiveMind)
 
 # ============================================================
 # matrix_tests — standalone benchmark runner

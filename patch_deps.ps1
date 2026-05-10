@@ -42,14 +42,14 @@ if ($nuraft -match 'WIN32_LEAN_AND_MEAN') {
 }
 
 # ── Patch 2: msquic\scripts\build.ps1 ────────────────────────
-# Replace "Visual Studio 17 2022" with "Visual Studio 18 2022"
+# Replace "Visual Studio 17 2022" with "Visual Studio 18"
 # so MSQuic's cmake invocation targets the correct VS generator.
 $msquic = Get-Content $MsQuicBuild -Raw
 
 if ($msquic -match 'Visual Studio 18') {
     Write-Host "[skip] msquic\scripts\build.ps1 already patched."
 } else {
-    $msquic = $msquic -replace 'Visual Studio 17 2022', 'Visual Studio 18 2022'
+    $msquic = $msquic -replace 'Visual Studio 17 2022', 'Visual Studio 18'
     Set-Content $MsQuicBuild $msquic -NoNewline
     Write-Host "[ok] msquic\scripts\build.ps1 patched."
 }
