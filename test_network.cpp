@@ -237,29 +237,46 @@ static void test_scan_loopback()
     bool init_ok = net.init();
     CHECK(init_ok);
 
-    // Run scan - should receive our loopback reply
-    auto results = net.scan();
+    // Send a probe directly to 127.0.0.1 (responder bound to INADDR_ANY).
+    // net.scan() sends to INADDR_BROADCAST which may not loop back on all
+    // virtual/physical interfaces; probe the protocol directly instead.
+    SOCKET probe_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    CHECK(probe_sock != INVALID_SOCKET);
+
+    sockaddr_in dest = {};
+    dest.sin_family = AF_INET;
+    dest.sin_port   = htons(static_cast<u_short>(SCAN_UDP_PORT));
+    inet_pton(AF_INET, "127.0.0.1", &dest.sin_addr);
+
+    const char* probe_msg = "MINDMESH_SCAN";
+    sendto(probe_sock, probe_msg, (int)strlen(probe_msg) + 1, 0,
+           reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+
+    char reply[256] = {};
+    sockaddr_in from_addr = {}; int from_len = sizeof(from_addr);
+    DWORD rtv = 2000;
+    setsockopt(probe_sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<char*>(&rtv), sizeof(rtv));
+    int rn = recvfrom(probe_sock, reply, sizeof(reply)-1, 0,
+                      reinterpret_cast<sockaddr*>(&from_addr), &from_len);
+    closesocket(probe_sock);
 
     g_scan_responder_stop = true;
     WaitForSingleObject(hThread, 2000);
     CloseHandle(hThread);
 
-    CHECK(results.size() >= 1);
-    if (!results.empty()) {
-        // At least one result should have our name
-        bool found = false;
-        for (auto& r : results) {
-            if (r.name == "TestNet") {
-                found          = true;
-                CHECK(r.has_password == false);
-                CHECK(!r.leader_ip.empty());
-                printf("         Found network: '%s' at %s pw=%d\n",
-                       r.name.c_str(), r.leader_ip.c_str(), r.has_password);
-                break;
-            }
-        }
-        CHECK(found);
-    }
+    bool got_reply = (rn > 0);
+    bool has_here  = got_reply && (strncmp(reply, "MINDMESH_HERE", 13) == 0);
+    bool has_name  = got_reply && (strstr(reply, "TestNet") != nullptr);
+    bool no_pw     = got_reply && (strstr(reply, "pw=0")    != nullptr);
+
+    CHECK(got_reply);
+    CHECK(has_here);
+    CHECK(has_name);
+    CHECK(no_pw);
+
+    if (got_reply)
+        printf("         Scan reply: '%s'\n", reply);
 }
 
 // -----------------------------------------------------------------------------

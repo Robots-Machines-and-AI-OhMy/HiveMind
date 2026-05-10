@@ -270,3 +270,37 @@ target_link_libraries(test_network PRIVATE
 )
 copy_msquic_dll(test_network)
 link_nuraft(test_network)
+
+# ============================================================
+# test_hook.exe -- hook + transfer engine unit tests
+# Build: cmake --build build --target test_hook
+# Run:   build\test_hook.exe   (hook.dll must be in same dir)
+# ============================================================
+add_executable(test_hook
+        test_hook.cpp
+        transfer_engine.cpp
+        global.cpp
+)
+target_include_directories(test_hook PRIVATE
+        "${MSQUIC_INCLUDE}"
+        "${NURAFT_INCLUDE}"
+        "${NURAFT_ASIO}")
+target_compile_definitions(test_hook PRIVATE ${HiveMind_COMPILE_DEFS})
+target_compile_options(test_hook PRIVATE ${HiveMind_PCH_FLAG})
+target_link_libraries(test_hook PRIVATE
+        kernel32
+        ws2_32
+        advapi32
+        psapi
+        "${MSQUIC_LIB}"
+        tiny_sha
+)
+copy_msquic_dll(test_hook)
+
+# Copy hook.dll next to test_hook.exe so it can LoadLibrary("hook.dll")
+add_custom_command(TARGET test_hook POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:hook>
+        $<TARGET_FILE_DIR:test_hook>
+        COMMENT "Copying hook.dll for test_hook")
+add_dependencies(test_hook hook offload_hook)
