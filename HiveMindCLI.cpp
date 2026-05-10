@@ -1,199 +1,372 @@
-#include <iostream>
-#include <string>
-#include <vector>
+/*
+ * HiveMindCLI.cpp
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Interactive command-line interface for the HiveMind distributed offloading
+ * system.
+ *
+ * On startup:
+ *   1. Runs the benchmark and prints the local metric score.
+ *   2. Loads offload_hook.dll and calls Inject() to wire the engines into
+ *      hook.dll (if hook.dll is registered system-wide via AppInit_DLLs,
+ *      Inject supplies the engines; if not, it loads hook.dll in-process only).
+ *
+ * On exit (any path — 'exit' command, Ctrl-C, or unhandled exception):
+ *   3. Ejects the hook (clears engine pointers).
+ *   4. Disconnects from the HiveMind network if connected.
+ *   5. Calls install_hook.exe uninstall (elevated) to clear AppInit_DLLs so
+ *      hook.dll is no longer injected into new processes after we exit.
+ *
+ * Commands:
+ *   help        print this list
+ *   create      create a new HiveMind network (you become leader)
+ *   scan        discover nearby HiveMind networks
+ *   join        join an existing network
+ *   hook        install hook.dll system-wide (requires admin, prompts UAC)
+ *   unhook      uninstall hook.dll system-wide
+ *   status      show connection and node info
+ *   leader      show current leader IP
+ *   disconnect  leave the network
+ *   exit        clean shutdown
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 #include "Network.hpp"
 #include "compute_check.hpp"
 #include "global.hpp"
 #include "global_strings.hpp"
+#include <shellapi.h>
 
-using namespace std;
+#include <iostream>
+#include <string>
+#include <sstream>
 
-enum Command {
-    HELP,
-    CREATE,
-    SCAN,
-    JOIN,
-    STATUS,
-    GETLEADER,
-    DISCONNECT,
-    EXIT,
-    UNKNOWN
-};
+// ── Hook DLL management ───────────────────────────────────────────────────────
 
-Command getCommand(const string& cmd) {
-    if (cmd == "help") return HELP;
-    if (cmd == "create") return CREATE;
-    if (cmd == "scan") return SCAN;
-    if (cmd == "join") return JOIN;
-    if (cmd == "status") return STATUS;
-    if (cmd == "leader") return GETLEADER;
-    if (cmd == "disconnect") return DISCONNECT;
-    if (cmd == "exit") return EXIT;
-    return UNKNOWN;
+typedef BOOL (WINAPI *FnInject)(void);
+typedef void (WINAPI *FnEject)(void);
+
+static HMODULE  g_offload_dll  = NULL;
+static FnInject g_inject_fn    = NULL;
+static FnEject  g_eject_fn     = NULL;
+
+static void hook_load()
+{
+    if (g_offload_dll) return;
+    g_offload_dll = LoadLibraryW(L"offload_hook.dll");
+    if (!g_offload_dll) {
+        std::cout << "[hook] offload_hook.dll not found in PATH — "
+                     "offloading disabled.\n";
+        return;
+    }
+    g_inject_fn = (FnInject)GetProcAddress(g_offload_dll, "Inject");
+    g_eject_fn  = (FnEject) GetProcAddress(g_offload_dll, "Eject");
+
+    if (g_inject_fn && g_inject_fn()) {
+        std::cout << "[hook] Engine wired into hook.dll.\n";
+    } else {
+        std::cout << "[hook] Inject() failed — hook.dll may not be active.\n";
+    }
 }
 
-int main() {
-    metric = metric_calculation();
-    string input;
-    string networkName;
-    string password;
+static void hook_unload()
+{
+    if (!g_offload_dll) return;
+    if (g_eject_fn) g_eject_fn();
+    FreeLibrary(g_offload_dll);
+    g_offload_dll = NULL;
+    g_inject_fn   = NULL;
+    g_eject_fn    = NULL;
+}
 
-    bool running = true;
+// ── System-wide hook install / uninstall via install_hook.exe ─────────────────
 
-    NetworkManager& NetManager = NetworkManager::getInstance();
-    NetManager.init();
+// Locate install_hook.exe relative to our own binary.
+static std::wstring find_install_hook()
+{
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(NULL, self, MAX_PATH);
+    wchar_t *last = wcsrchr(self, L'\\');
+    if (last) *(last + 1) = L'\0';
+    std::wstring path = std::wstring(self) + L"install_hook.exe";
+    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return L"";
+    return path;
+}
 
-    cout << "Metric Score: " << metric << endl;
-    cout << "=============================\n";
-    cout << "     HiveMind CLI System\n";
-    cout << "=============================\n";
-    cout << "Type 'help' to see commands.\n\n";
-
-    while (running) {
-        cout << "HiveMind> ";
-        cin >> input;
-
-        switch (getCommand(input)) {
-
-            case HELP:
-                cout << "Available Commands:\n";
-                cout << "create      - Create a HiveMind network\n";
-                cout << "scan        - Search for HiveMind networks\n";
-                cout << "join        - Join a network\n";
-                cout << "status      - View current network status\n";
-                cout << "leader      - Show current leader node\n";
-                cout << "disconnect  - Leave the network\n";
-                cout << "exit        - Close HiveMind\n\n";
-                break;
-
-            case CREATE:
-				if (NetManager.isConnected()) {
-					cout << "Already connected to network, cannot create. Disconnect from current network to create new one\n";
-					break;
-				}
-                cout << "Create your network\n";
-                cout << "Enter the name of your network: ";
-                cin >> networkName;
-
-                cout << "Enter the password for your network or NA for no password: ";
-                cin >> password;
-
-                if (password == "NA") password = "";
-                if (NetManager.createNetwork(networkName, password))
-                    cout << "Network '" << networkName << "' created. You are the leader.\n\n";
-                else
-                    cout << "Error: Could not create network.\n\n";
-                break;
-
-            case SCAN: {
-                cout << "Scanning local network...\n";
-                vector<ScanResult> results = NetManager.scan();
-                if (results.empty()) {
-                    cout << "No HiveMind networks found.\n\n";
-                } else {
-                    cout << "Found networks:\n";
-                    for (size_t i = 0; i < results.size(); ++i) {
-                        cout << (i + 1) << ". "
-                             << results[i].name
-                             << " | Leader: " << results[i].leader_ip
-                             << " | Password: " << (results[i].has_password ? "Yes" : "No")
-                             << "\n";
-                    }
-                    cout << "\n";
-                }
-                break;
-            }
-
-            case JOIN: {
-				if (NetManager.isConnected()) {
-					cout << "Already connected to network, cannot join. Disconnect from current network to join new one\n";
-					break;
-				}
-                cout << "Scanning for networks...\n";
-                vector<ScanResult> results = NetManager.scan();
-                if (results.empty()) {
-                    cout << "No networks found. Use 'scan' first.\n\n";
-                    break;
-                }
-
-                for (size_t i = 0; i < results.size(); ++i) {
-                    cout << (i + 1) << ". "
-                         << results[i].name
-                         << " (" << results[i].leader_ip << ")"
-                         << (results[i].has_password ? " [password required]" : "")
-                         << "\n";
-                }
-
-                cout << "Enter network name: ";
-                cin >> networkName;
-
-                cout << "Enter password: ";
-                cin >> password;
-
-                string leader_ip;
-                for (auto& r : results)
-                    if (r.name == networkName) { leader_ip = r.leader_ip; break; }
-
-                if (leader_ip.empty()) {
-                    cout << "Error: Network '" << networkName << "' not found in scan results.\n\n";
-                    break;
-                }
-
-                if (NetManager.joinNetwork(leader_ip, networkName, password))
-                    cout << "Connected to " << networkName << " successfully.\n\n";
-                else
-                    cout << "Error: Connection attempt failed.\n\n";
-                break;
-            }
-
-            case STATUS:
-                if (NetManager.isConnected()) {
-                    cout << "Network Status:\n";
-                    cout << NetManager.statusString() << "\n\n";
-                } else {
-                    cout << "Error: Not connected to a HiveMind network.\n\n";
-                }
-                break;
-
-            case GETLEADER:
-                if (NetManager.isConnected()) {
-                    string lip = NetManager.leaderIp();
-                    cout << "Current Leader Node: "
-                         << (lip.empty() ? "election in progress" : lip)
-                         << "\n\n";
-                } else {
-                    cout << "Error: Not connected to a HiveMind network.\n\n";
-                }
-                break;
-
-            case DISCONNECT:
-                if (NetManager.isConnected()) {
-                    cout << "Leaving HiveMind network...\n";
-                    NetManager.disconnect();
-                    cout << "Safely disconnected from network.\n\n";
-                } else {
-                    cout << "Error: No active network connection.\n\n";
-                }
-                break;
-
-            case EXIT:
-				if (NetManager.isConnected()) {
-					cout << "Leaving HiveMind network...\n";
-                    NetManager.disconnect();
-                    cout << "Safely disconnected from network.\n\n";
-				}
-                cout << "Closing HiveMind CLI...\n";
-                running = false;
-                break;
-
-            case UNKNOWN:
-            default:
-                cout << "Error: Unknown command. Type 'help' for command list.\n\n";
-                break;
-        }
+// Run install_hook.exe with the given args; returns exit code or -1 on failure.
+// ShellExecuteExW is used so Windows can prompt UAC if needed.
+static int run_install_hook(const std::wstring& args)
+{
+    std::wstring exe = find_install_hook();
+    if (exe.empty()) {
+        std::cout << "[hook] install_hook.exe not found next to HiveMind.exe\n";
+        return -1;
     }
 
-    NetManager.cleanup();
-    cout << "Closed";
+    SHELLEXECUTEINFOW sei = { sizeof(sei) };
+    sei.fMask       = SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb      = L"runas";          // request elevation
+    sei.lpFile      = exe.c_str();
+    sei.lpParameters= args.c_str();
+    sei.nShow       = SW_HIDE;
+
+    if (!ShellExecuteExW(&sei)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_CANCELLED)
+            std::cout << "[hook] UAC prompt cancelled.\n";
+        else
+            std::cout << "[hook] ShellExecuteExW failed (err " << err << ")\n";
+        return -1;
+    }
+
+    WaitForSingleObject(sei.hProcess, 10000);
+    DWORD code = 0;
+    GetExitCodeProcess(sei.hProcess, &code);
+    CloseHandle(sei.hProcess);
+    return (int)code;
+}
+
+static void cmd_hook_install()
+{
+    // Get full path to hook.dll next to us
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(NULL, self, MAX_PATH);
+    wchar_t *last = wcsrchr(self, L'\\');
+    if (last) *(last + 1) = L'\0';
+    std::wstring hook_path = std::wstring(self) + L"hook.dll";
+
+    if (GetFileAttributesW(hook_path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        std::cout << "[hook] hook.dll not found at: ";
+        std::wcout << hook_path << L"\n";
+        return;
+    }
+
+    std::wstring args = L"install \"" + hook_path + L"\"";
+    std::cout << "[hook] Installing hook.dll system-wide (UAC prompt may appear)...\n";
+    int rc = run_install_hook(args);
+    if (rc == 0)
+        std::cout << "[hook] Installed. New processes will be intercepted.\n";
+    else
+        std::cout << "[hook] Install failed (code " << rc << ").\n";
+}
+
+static void cmd_hook_uninstall()
+{
+    std::cout << "[hook] Removing hook.dll from AppInit_DLLs "
+                 "(UAC prompt may appear)...\n";
+    int rc = run_install_hook(L"uninstall");
+    if (rc == 0)
+        std::cout << "[hook] Uninstalled. New processes will not be intercepted.\n";
+    else
+        std::cout << "[hook] Uninstall failed (code " << rc << ").\n";
+}
+
+// ── Clean shutdown ─────────────────────────────────────────────────────────────
+
+static void shutdown()
+{
+    NetworkManager& net = NetworkManager::getInstance();
+
+    if (net.isConnected()) {
+        std::cout << "[exit] Disconnecting from network...\n";
+        net.disconnect();
+    }
+    net.cleanup();
+
+    hook_unload();
+
+    // Always attempt to clear AppInit_DLLs on exit — silent (SW_HIDE),
+    // best-effort.  If the user never ran 'hook', this is a no-op.
+    std::wstring exe = find_install_hook();
+    if (!exe.empty()) {
+        SHELLEXECUTEINFOW sei = { sizeof(sei) };
+        sei.fMask        = SEE_MASK_NOCLOSEPROCESS;
+        sei.lpVerb       = L"runas";
+        sei.lpFile       = exe.c_str();
+        sei.lpParameters = L"uninstall";
+        sei.nShow        = SW_HIDE;
+        if (ShellExecuteExW(&sei)) {
+            WaitForSingleObject(sei.hProcess, 5000);
+            CloseHandle(sei.hProcess);
+        }
+    }
+}
+
+// Ctrl-C / console close handler
+static BOOL WINAPI console_handler(DWORD event)
+{
+    if (event == CTRL_C_EVENT || event == CTRL_CLOSE_EVENT ||
+        event == CTRL_LOGOFF_EVENT || event == CTRL_SHUTDOWN_EVENT)
+    {
+        std::cout << "\n[exit] Signal received — shutting down...\n";
+        shutdown();
+        return FALSE;   // let Windows terminate the process
+    }
+    return FALSE;
+}
+
+// ── Command helpers ────────────────────────────────────────────────────────────
+
+static void cmd_help()
+{
+    std::cout <<
+        "\nAvailable commands:\n"
+        "  help        Show this list\n"
+        "  create      Create a new HiveMind network (you become leader)\n"
+        "  scan        Discover nearby HiveMind networks\n"
+        "  join        Join an existing network\n"
+        "  hook        Install hook.dll system-wide (intercept processes)\n"
+        "  unhook      Remove hook.dll from AppInit_DLLs\n"
+        "  status      Show connection and node info\n"
+        "  leader      Show current leader IP\n"
+        "  disconnect  Leave the current network\n"
+        "  exit        Clean shutdown\n\n";
+}
+
+static void cmd_create()
+{
+    std::string name, password;
+    std::cout << "Network name: ";
+    std::cin >> name;
+    std::cout << "Password (or NA for none): ";
+    std::cin >> password;
+    if (password == "NA") password = "";
+
+    NetworkManager& net = NetworkManager::getInstance();
+    if (net.isConnected()) {
+        std::cout << "Already connected. Run 'disconnect' first.\n\n";
+        return;
+    }
+    if (net.createNetwork(name, password))
+        std::cout << "Network '" << name << "' created. You are the leader.\n\n";
+    else
+        std::cout << "Failed to create network.\n\n";
+}
+
+static void cmd_scan()
+{
+    std::cout << "Scanning...\n";
+    NetworkManager& net = NetworkManager::getInstance();
+    if (!net.init()) {
+        std::cout << "Network init failed.\n\n";
+        return;
+    }
+    auto results = net.scan();
+    if (results.empty()) {
+        std::cout << "No HiveMind networks found.\n\n";
+        return;
+    }
+    std::cout << "Found " << results.size() << " network(s):\n";
+    int i = 1;
+    for (auto& r : results) {
+        std::cout << "  " << i++ << ". " << r.name
+                  << " | Leader: " << r.leader_ip
+                  << " | Password: " << (r.has_password ? "Yes" : "No")
+                  << "\n";
+    }
+    std::cout << "\n";
+}
+
+static void cmd_join()
+{
+    std::string leader_ip, name, password;
+    std::cout << "Leader IP: ";
+    std::cin >> leader_ip;
+    std::cout << "Network name: ";
+    std::cin >> name;
+    std::cout << "Password (or NA for none): ";
+    std::cin >> password;
+    if (password == "NA") password = "";
+
+    NetworkManager& net = NetworkManager::getInstance();
+    if (net.isConnected()) {
+        std::cout << "Already connected. Run 'disconnect' first.\n\n";
+        return;
+    }
+    if (net.joinNetwork(leader_ip, name, password))
+        std::cout << "Joined network '" << name << "' via " << leader_ip << ".\n\n";
+    else
+        std::cout << "Failed to join network (wrong password or leader unreachable).\n\n";
+}
+
+static void cmd_status()
+{
+    NetworkManager& net = NetworkManager::getInstance();
+    if (!net.isConnected()) {
+        std::cout << "Not connected to any network.\n\n";
+        return;
+    }
+    std::cout << "\n" << net.statusString() << "\n";
+}
+
+static void cmd_leader()
+{
+    NetworkManager& net = NetworkManager::getInstance();
+    if (!net.isConnected()) {
+        std::cout << "Not connected.\n\n";
+        return;
+    }
+    std::string lip = net.leaderIp();
+    std::cout << "Leader: " << (lip.empty() ? "election in progress" : lip)
+              << "\n\n";
+}
+
+static void cmd_disconnect()
+{
+    NetworkManager& net = NetworkManager::getInstance();
+    if (!net.isConnected()) {
+        std::cout << "Not connected.\n\n";
+        return;
+    }
+    net.disconnect();
+    std::cout << "Disconnected.\n\n";
+}
+
+// ── main ──────────────────────────────────────────────────────────────────────
+
+int main()
+{
+    // Register Ctrl-C / close handler for clean teardown
+    SetConsoleCtrlHandler(console_handler, TRUE);
+
+    // Benchmark
+    metric = metric_calculation();
+    std::cout << "==============================================\n";
+    std::cout << "     HiveMind  -  Distributed Offloading\n";
+    std::cout << "==============================================\n";
+    std::cout << "Benchmark score : " << metric << "\n\n";
+
+    // Initialise network layer
+    NetworkManager& net = NetworkManager::getInstance();
+    net.init();
+
+    // Load offload engines (non-fatal if DLL missing)
+    hook_load();
+
+    std::cout << "Type 'help' to see commands.\n\n";
+
+    std::string input;
+    while (true) {
+        std::cout << "HiveMind> ";
+        if (!(std::cin >> input)) break;   // EOF / pipe closed
+
+        if      (input == "help")       cmd_help();
+        else if (input == "create")     cmd_create();
+        else if (input == "scan")       cmd_scan();
+        else if (input == "join")       cmd_join();
+        else if (input == "hook")       cmd_hook_install();
+        else if (input == "unhook")     cmd_hook_uninstall();
+        else if (input == "status")     cmd_status();
+        else if (input == "leader")     cmd_leader();
+        else if (input == "disconnect") cmd_disconnect();
+        else if (input == "exit")       break;
+        else
+            std::cout << "Unknown command '" << input
+                      << "'. Type 'help'.\n\n";
+    }
+
+    std::cout << "Shutting down...\n";
+    shutdown();
+    std::cout << "Closed.\n";
     return 0;
 }

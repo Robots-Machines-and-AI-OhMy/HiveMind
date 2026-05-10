@@ -225,6 +225,15 @@ target_link_libraries(HiveMind PRIVATE
 copy_msquic_dll(HiveMind)
 link_nuraft(HiveMind)
 
+# Copy hook DLLs next to HiveMind.exe so Inject() can find them
+add_custom_command(TARGET HiveMind POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:hook>
+        $<TARGET_FILE:offload_hook>
+        $<TARGET_FILE_DIR:HiveMind>
+        COMMENT "Copying hook DLLs for HiveMind")
+add_dependencies(HiveMind hook offload_hook install_hook)
+
 # ============================================================
 # matrix_tests — standalone benchmark runner
 # Requires a trivial main() in matrix_test_main.cpp:
