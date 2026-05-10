@@ -49,6 +49,14 @@ https://visualstudio.microsoft.com/downloads/?q=build+tools
 3. Download:
 - Build Tools for Visual Studio 2026
 
+4. Run:
+- Run the downloaded file
+
+5. Install tools:
+- Click on "Desktop development with C++"
+- Click install
+- Close the installer once done downloading
+
 Additional configuration steps will be added later.
 
 ---
