@@ -12,9 +12,9 @@ Before building HiveMind, install the following tools and dependencies.
 
 Install via command:
 
-'''
+```
 iex "& { $(irm https://aka.ms/install-powershell.ps1) } -UseMSI"
-'''
+```
 
 ---
 
@@ -55,18 +55,18 @@ Additional configuration steps will be added later.
 
 # Clone Repository
 
-'''
+```
 git clone https://github.com/Robots-Machines-and-AI-OhMy/HiveMind.git --recurse-submodules
-'''
+```
 
 ---
 
 # Build Instructions
 
-'''
+```
 cd HiveMind
 ./build.bat
-'''
+```
 
 ---
 
