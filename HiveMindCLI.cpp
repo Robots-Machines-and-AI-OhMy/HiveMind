@@ -67,6 +67,10 @@ int main() {
                 break;
 
             case CREATE:
+				if (NetManager.isConnected()) {
+					cout << "Already connected to network, cannot create. Disconnect from current network to create new one\n";
+					break;
+				}
                 cout << "Create your network\n";
                 cout << "Enter the name of your network: ";
                 cin >> networkName;
@@ -101,6 +105,10 @@ int main() {
             }
 
             case JOIN: {
+				if (NetManager.isConnected()) {
+					cout << "Already connected to network, cannot join. Disconnect from current network to join new one\n";
+					break;
+				}
                 cout << "Scanning for networks...\n";
                 vector<ScanResult> results = NetManager.scan();
                 if (results.empty()) {
