@@ -130,6 +130,11 @@ public:
     // Snapshot of current scores for all known nodes (leader-only meaningful).
     std::unordered_map<int, NodeInfo> node_snapshot() const;
 
+    // Called by the network layer when an OFRS (offload response) arrives
+    // from the leader on a follower node.  Resolves the pending future.
+    void resolve_offload_response(const std::string& process_id,
+                                  OffloadResponse rsp);
+
 private:
     // ── Internal helpers ─────────────────────────────────────────────────────
     std::string elect_target(double requestor_score) const;
@@ -145,7 +150,7 @@ private:
     std::atomic<double>                        local_metric_{1.0};
 
     QuicTransport&                             quic_;
-std::unordered_map<int,std::string>  peer_endpoints_;
+    std::unordered_map<int,std::string>  peer_endpoints_;
 
     bool running_ = false;
 };

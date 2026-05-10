@@ -15,6 +15,7 @@
 #include "Network.hpp"
 #include "tiny_sha.h"
 #include "join_protocol.hpp"
+#include "leader_protocol.hpp"
 
 // Network.hpp sets WIN32_LEAN_AND_MEAN + NOMINMAX + winsock2.h
 // before msquic.h, so the order above is safe.
@@ -26,6 +27,7 @@
 #include <chrono>
 #include <thread>
 #include <algorithm>
+#include <vector>
 
 // winsock2/msquic already included via Network.hpp.
 // ws2_32.lib linked via CMakeLists.txt — no pragma needed.
@@ -189,21 +191,97 @@ bool QuicTransport::init(const std::string& local_ip)
 // Called by NetworkManager after both quic_ and raft_ are constructed
 // to wire incoming heartbeat packets into the Raft engine.
 // Defined here so it has access to the HeartbeatPacket type.
+// ─────────────────────────────────────────────────────────────────────────────
+// OFLD forwarding helpers
+//
+// Wire format for follower→leader offload request (sent via QUIC):
+//   [4]  'O','F','L','D'
+//   [4]  requester_node_id  (little-endian uint32)
+//   [4]  process_id length  (little-endian uint32)
+//   [N]  process_id bytes
+// ─────────────────────────────────────────────────────────────────────────────
+
+static uint32_t le32(const uint8_t* p)
+{
+    return uint32_t(p[0]) | uint32_t(p[1])<<8
+         | uint32_t(p[2])<<16 | uint32_t(p[3])<<24;
+}
+
 void NetworkManager::wireHeartbeatReceiver()
 {
     quic_->set_recv_callback(
         [this](const std::string& from, const uint8_t* data, size_t len)
         {
+            if (!raft_) return;
+
+            // ── OFLD message (follower → leader) ─────────────────────────────
+            if (len >= 12
+                && data[0]=='O' && data[1]=='F'
+                && data[2]=='L' && data[3]=='D')
+            {
+                if (!raft_->is_leader()) return;  // drop if we are not the leader
+
+                uint32_t requester_id = le32(data + 4);
+                uint32_t pid_len      = le32(data + 8);
+                if (len < 12 + pid_len) return;
+
+                std::string process_id(
+                    reinterpret_cast<const char*>(data + 12), pid_len);
+
+                // Leader performs placement and commits to Raft log.
+                std::string target = raft_->request_offload(
+                    process_id,
+                    std::chrono::milliseconds(LEADER_RESPONSE_TIMEOUT_MS));
+
+                // Send response back to the requesting follower.
+                // Wire: [4]'OFRS' [4]success [4]ip_len [N]ip [4]pid_len [M]pid
+                uint32_t ip_len  = uint32_t(target.size());
+                uint32_t pid_len2= uint32_t(process_id.size());
+                uint8_t  succ    = target.empty() ? 0 : 1;
+                std::vector<uint8_t> rsp(4+4+4+ip_len+4+pid_len2);
+                rsp[0]='O'; rsp[1]='F'; rsp[2]='R'; rsp[3]='S';
+                auto pu32 = [](uint8_t* d, uint32_t v){
+                    d[0]=v; d[1]=v>>8; d[2]=v>>16; d[3]=v>>24; };
+                pu32(&rsp[4],  succ);
+                pu32(&rsp[8],  ip_len);
+                if (ip_len) memcpy(&rsp[12], target.data(), ip_len);
+                pu32(&rsp[12+ip_len], pid_len2);
+                if (pid_len2) memcpy(&rsp[16+ip_len],
+                                     process_id.data(), pid_len2);
+                quic_->send(from, rsp.data(), rsp.size());
+                (void)requester_id;
+                return;
+            }
+
+            // ── OFRS message (leader → follower response) ────────────────────
+            if (len >= 12
+                && data[0]=='O' && data[1]=='F'
+                && data[2]=='R' && data[3]=='S')
+            {
+                uint32_t success = le32(data + 4);
+                uint32_t ip_len2 = le32(data + 8);
+                if (len < 12 + ip_len2 + 4) return;
+                std::string target_ip(
+                    reinterpret_cast<const char*>(data + 12), ip_len2);
+                uint32_t pid_len3 = le32(data + 12 + ip_len2);
+                if (len < 16 + ip_len2 + pid_len3) return;
+                std::string pid(
+                    reinterpret_cast<const char*>(data + 16 + ip_len2), pid_len3);
+
+                raft_->resolve_offload_response(
+                    pid,
+                    dist::OffloadResponse{ target_ip, success != 0 });
+                return;
+            }
+
+            // ── Heartbeat packet ──────────────────────────────────────────────
             if (len < sizeof(HeartbeatPacket)) return;
             HeartbeatPacket pkt;
             memcpy(&pkt, data, sizeof(pkt));
-            if (!raft_) return;
-            // Forward both scores into the Raft engine so it maintains
-            // a full per-node table (benchmark + live heartbeat score).
             raft_->on_heartbeat_received(pkt.node_id,
                                          pkt.heartbeat_score,
                                          pkt.benchmark_metric,
-                                         0 /* seq — NuRaft handles ordering */);
+                                         0);
         });
 }
 

@@ -569,6 +569,8 @@ std::string RaftDistribution::request_offload(
             return "";
         }
     } else {
+        // Follower: forward to leader via lightweight QUIC message.
+        // Wire: [4]'OFLD' [4]node_id [4]pid_len [N]pid
         int leader = leader_id();
         if (leader < 0) {
             std::lock_guard<std::mutex> lk(pending_mtx);
@@ -576,21 +578,27 @@ std::string RaftDistribution::request_offload(
             return "";
         }
 
-        // Forward to leader using a lightweight QUIC message (not Raft log).
-        // Wire format: [4 bytes "OFLD"] [4 bytes node_id] [4+N bytes process_id]
+        auto ep_it = peer_endpoints_.find(leader);
+        if (ep_it == peer_endpoints_.end()) {
+            std::lock_guard<std::mutex> lk(pending_mtx);
+            pending.erase(process_id);
+            return "";
+        }
+
         uint32_t pid_len = uint32_t(process_id.size());
         std::vector<uint8_t> wire(4 + 4 + 4 + pid_len);
-        wire[0] = 'O'; wire[1] = 'F'; wire[2] = 'L'; wire[3] = 'D';
+        wire[0]='O'; wire[1]='F'; wire[2]='L'; wire[3]='D';
         uint8_t tmp[4];
         write_u32(tmp, uint32_t(LOCAL_RAFT_NODE_ID));
         std::memcpy(&wire[4], tmp, 4);
         write_u32(tmp, pid_len);
         std::memcpy(&wire[8], tmp, 4);
-        std::memcpy(&wire[12], process_id.data(), pid_len);
+        if (pid_len) std::memcpy(&wire[12], process_id.data(), pid_len);
 
-        auto ep_it = peer_endpoints_.find(leader);
-        if (ep_it != peer_endpoints_.end())
-            quic_.send(ep_it->second, wire.data(), wire.size());
+        // Send and wait — the leader will reply with an OFRS packet which
+        // NetworkManager::wireHeartbeatReceiver() routes to resolve_offload_response(),
+        // which resolves the pending future below.
+        quic_.send(ep_it->second, wire.data(), wire.size());
     }
 
     if (fut.wait_for(timeout) != std::future_status::ready) {
@@ -629,10 +637,18 @@ void RaftDistribution::add_peer(int node_id,
 
     // Update peer_endpoints_ for QUIC forwarding.
     // Cast away const — peer_endpoints_ needs to be mutable for this.
-    const_cast<std::unordered_map<int,std::string>&>(peer_endpoints_)[node_id] = endpoint;
+    peer_endpoints_[node_id] = endpoint;
 
     std::cout << "[raft] Added peer node " << node_id
               << " at " << endpoint << "\n";
+}
+
+// ── Follower response resolver ─────────────────────────────────────────────────
+
+void RaftDistribution::resolve_offload_response(
+    const std::string& process_id, OffloadResponse rsp)
+{
+    resolve_pending(process_id, std::move(rsp));
 }
 
 // ── Introspection ─────────────────────────────────────────────────────────────
