@@ -16,11 +16,10 @@
  * --------------------------------------------------------------
  */
 
-#define WIN32_LEAN_AND_MEAN
-#define UNICODE
-#define _UNICODE
 #include <windows.h>
 #include <winsock2.h>
+#include <stdlib.h>   // _wtoi
+#include <stddef.h>
 #include <ws2tcpip.h>
 #include <psapi.h>
 #include <stdio.h>
@@ -114,17 +113,18 @@ static void collect_deps(const wchar_t *binary_path,
         if (!base) return;
 
         __try {
+            do {
             IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)base;
-            if (dos->e_magic != IMAGE_DOS_SIGNATURE) goto unmap;
+            if (dos->e_magic != IMAGE_DOS_SIGNATURE) break;
 
             IMAGE_NT_HEADERS *nt =
                 (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
-            if (nt->Signature != IMAGE_NT_SIGNATURE) goto unmap;
+            if (nt->Signature != IMAGE_NT_SIGNATURE) break;
 
             IMAGE_DATA_DIRECTORY *dir =
                 &nt->OptionalHeader
                     .DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-            if (!dir->VirtualAddress) goto unmap;
+            if (!dir->VirtualAddress) break;
 
             IMAGE_IMPORT_DESCRIPTOR *imp =
                 (IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
@@ -196,7 +196,7 @@ static void collect_deps(const wchar_t *binary_path,
                 /* Recurse into this dep */
                 collect_deps(full, deps, depth + 1);
             }
-        unmap:;
+            } while (0); // replaces goto unmap
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
 
         UnmapViewOfFile(base);

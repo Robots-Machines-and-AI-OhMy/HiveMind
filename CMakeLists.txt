@@ -125,6 +125,7 @@ target_link_libraries(hook PRIVATE kernel32 psapi)
 # ============================================================
 add_library(offload_hook SHARED
         Offload_Hook.cpp
+        transfer_engine.cpp
         network.cpp
         Raft_Engine.cpp
         compute_check.cpp
@@ -137,7 +138,7 @@ target_include_directories(offload_hook PRIVATE
         "${NURAFT_ASIO}")
 target_compile_definitions(offload_hook PRIVATE ${HiveMind_COMPILE_DEFS})
 target_compile_options(offload_hook PRIVATE ${HiveMind_PCH_FLAG})
-target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh "${MSQUIC_LIB}" tiny_sha)
+target_link_libraries(offload_hook PRIVATE kernel32 ws2_32 advapi32 pdh psapi "${MSQUIC_LIB}" tiny_sha)
 copy_msquic_dll(offload_hook)
 link_nuraft(offload_hook)
 
@@ -186,8 +187,10 @@ endforeach()
 # Receives offloaded process bundles on target nodes.
 # Uncomment when remote_agent.cpp is added to the project.
 # ============================================================
-# add_executable(remote_agent remote_agent.cpp)
-# target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
+add_executable(remote_agent remote_agent.cpp)
+target_compile_definitions(remote_agent PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(remote_agent PRIVATE ${HiveMind_PCH_FLAG})
+target_link_libraries(remote_agent PRIVATE ws2_32 kernel32)
 
 # ============================================================
 # HiveMind.exe — main CLI application
