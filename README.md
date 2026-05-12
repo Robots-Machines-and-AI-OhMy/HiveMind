@@ -71,6 +71,7 @@ git clone https://github.com/Robots-Machines-and-AI-OhMy/HiveMind.git --recurse-
 
 # Build Instructions
 
+Run the following in PowerShell:
 ```
 cd HiveMind
 ./build.bat
