@@ -11,6 +11,8 @@ Claude and ChatGPT were used in the development of this software.
 
 All commands listed below are intended to be run in windows PowerShell; command prompt may be used after building.
 
+Antivirus software will likely flag this software multiple times as it utilizes the same vulnerability that Virtual Machines do. We, however, lack the familiarity of these big corporations and thus the warning and/or quarantine.
+
 # Prerequisites
 
 Before building HiveMind, install the following tools and dependencies.
