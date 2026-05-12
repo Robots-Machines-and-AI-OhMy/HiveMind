@@ -225,6 +225,12 @@ static void cmd_help()
 
 static void cmd_create()
 {
+	NetworkManager& net = NetworkManager::getInstance();
+    if (net.isConnected()) {
+        std::cout << "Already connected. Run 'disconnect' first.\n\n";
+        return;
+    }
+	
     std::string name, password;
     std::cout << "Network name: ";
     std::cin >> name;
@@ -232,11 +238,7 @@ static void cmd_create()
     std::cin >> password;
     if (password == "NA") password = "";
 
-    NetworkManager& net = NetworkManager::getInstance();
-    if (net.isConnected()) {
-        std::cout << "Already connected. Run 'disconnect' first.\n\n";
-        return;
-    }
+    
     if (net.createNetwork(name, password))
         std::cout << "Network '" << name << "' created. You are the leader.\n\n";
     else
@@ -269,6 +271,12 @@ static void cmd_scan()
 
 static void cmd_join()
 {
+	NetworkManager& net = NetworkManager::getInstance();
+    if (net.isConnected()) {
+        std::cout << "Already connected. Run 'disconnect' first.\n\n";
+        return;
+    }
+	
     std::string leader_ip, name, password;
     std::cout << "Leader IP: ";
     std::cin >> leader_ip;
@@ -278,11 +286,6 @@ static void cmd_join()
     std::cin >> password;
     if (password == "NA") password = "";
 
-    NetworkManager& net = NetworkManager::getInstance();
-    if (net.isConnected()) {
-        std::cout << "Already connected. Run 'disconnect' first.\n\n";
-        return;
-    }
     if (net.joinNetwork(leader_ip, name, password))
         std::cout << "Joined network '" << name << "' via " << leader_ip << ".\n\n";
     else
