@@ -2,6 +2,9 @@
 
 HiveMind is a distributed computing and resource-sharing platform designed to combine multiple systems into a unified compute environment.
 
+## AI Disclaimer
+Claude and ChatGPT were used in the development of this software.
+
 ---
 
 # Note
