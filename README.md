@@ -14,7 +14,7 @@ Before building HiveMind, install the following tools and dependencies.
 
 ## 1. Install PowerShell 7
 
-Install via command:
+Install via PowerShell:
 
 ```
 iex "& { $(irm https://aka.ms/install-powershell.ps1) } -UseMSI"
