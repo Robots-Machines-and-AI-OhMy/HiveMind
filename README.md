@@ -69,7 +69,7 @@ https://visualstudio.microsoft.com/downloads/?q=build+tools
 Additional configuration steps will be added later.
 
 ### Note
-While ninja is often installed with "Desktop devlopment with C++, you may have to install it by following the instructions in the link below.
+While ninja is often installed with "Desktop devlopment with C++", you may have to install it by following the instructions in the link below.
 https://ninja-build.org/
 
 ---
