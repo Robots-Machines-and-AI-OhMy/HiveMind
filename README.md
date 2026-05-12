@@ -4,6 +4,10 @@ HiveMind is a distributed computing and resource-sharing platform designed to co
 
 ---
 
+# Note
+
+All commands listed below are intended to be run in windows PowerShell; command prompt may be used after building.
+
 # Prerequisites
 
 Before building HiveMind, install the following tools and dependencies.
@@ -71,7 +75,6 @@ git clone https://github.com/Robots-Machines-and-AI-OhMy/HiveMind.git --recurse-
 
 # Build Instructions
 
-Run the following in PowerShell:
 ```
 cd HiveMind
 ./build.bat
